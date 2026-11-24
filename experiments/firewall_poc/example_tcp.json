@@ -1,0 +1,90 @@
+{
+  "schema_version": "1-firewall-poc",
+  "started_at": "2026-11-22T20:19:55.334505+00:00",
+  "url": "https://example.com",
+  "requested_mode": "unrestricted",
+  "chromium_executable": "C:\\Users\\praba\\AppData\\Local\\ms-playwright\\chromium-1255\\chrome-win64\\chrome.exe",
+  "fresh_temporary_profile": true,
+  "quic_disabled": true,
+  "chromium_processes_during_probe": [
+    {
+      "connection": {
+        "OwningProcess": 21784,
+        "LocalAddress": "2401:4900:38c8:baf1:535:b166:9bd2:235f",
+        "LocalPort": 61805,
+        "RemoteAddress": "2606:4700:90c5:72db:f2fd:20:ef6b:ff98",
+        "RemotePort": 443,
+        "State": 5
+      },
+      "process": {
+        "ProcessId": 21784,
+        "ParentProcessId": 7212,
+        "Name": "chrome-headless-shell.exe",
+        "ExecutablePath": "C:\\Users\\praba\\AppData\\Local\\ms-playwright\\chromium_headless_shell-1255\\chrome-headless-shell-win64\\chrome-headless-shell.exe",
+        "CommandLine": "\"C:\\Users\\praba\\AppData\\Local\\ms-playwright\\chromium_headless_shell-1255\\chrome-headless-shell-win64\\chrome-headless-shell.exe\" --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --no-sandbox --use-angle=swiftshader-webgl --use-gl=angle --mute-audio --disable-quic --headless=old --field-trial-handle=1440,i,11786812359392281761,12828639316011702437,262144 --enable-features=CDPScreenshotNewSurface,SkipListAccountsWithoutGaiaCookies --disable-features=AimEnabled,AvoidCorsURLLoaderRestartOnRedirect,AvoidUnnecessaryBeforeUnloadCheckSync,DestroyProfileOnBrowserClose,HttpsFirstBalancedModeAutoEnable,HttpsUpgrades,LensOverlay,MediaRouter,NetworkTimeServiceQuerying,OptimizationHints,PaintHolding,PreconnectToSearch,TcpPortRandomizationWin,ThirdPartyStoragePartitioning,msEdgeUpdateLaunchServicesPreferredVersion,msForceBrowserSignIn --variations-seed-version --pseudonymization-salt-handle=1444,i,17995353947762789537,11774329111043240771,4 --trace-process-track-uuid=3190708989122997041 --enable-logging=handle --log-file=2128 --mojo-platform-channel-handle=2100 /prefetch:11"
+      }
+    }
+  ],
+  "navigation": {
+    "completed": true,
+    "http_status": 200,
+    "final_url": "https://example.com/"
+  },
+  "response_observations": [
+    {
+      "url": "https://example.com/",
+      "http_status": 200,
+      "playwright_server_addr": {
+        "available": true,
+        "ip": "2606:4700:90c5:72db:f2fd:20:ef6b:ff98",
+        "port": 443,
+        "address_family": "ipv6"
+      },
+      "playwright_server_addr_supported": true,
+      "playwright_server_addr_exception": null,
+      "cdp_remote_ip": {
+        "available": false,
+        "ip": null,
+        "address_family": "unknown"
+      },
+      "negotiated_protocol": "h2",
+      "observation_comparison": {
+        "status": "partial",
+        "playwright": "available",
+        "cdp": "unavailable"
+      }
+    },
+    {
+      "url": "https://example.com/s.js",
+      "http_status": 200,
+      "playwright_server_addr": {
+        "available": true,
+        "ip": "2606:4700:90c5:72db:f2fd:20:ef6b:ff98",
+        "port": 443,
+        "address_family": "ipv6"
+      },
+      "playwright_server_addr_supported": true,
+      "playwright_server_addr_exception": null,
+      "cdp_remote_ip": {
+        "available": false,
+        "ip": null,
+        "address_family": "unknown"
+      },
+      "negotiated_protocol": "h2",
+      "observation_comparison": {
+        "status": "partial",
+        "playwright": "available",
+        "cdp": "unavailable"
+      }
+    }
+  ],
+  "remote_peer_observations": [
+    {
+      "address": "2606:4700:90c5:72db:f2fd:20:ef6b:ff98",
+      "address_family": "ipv6",
+      "source": "playwright_server_addr"
+    }
+  ],
+  "failed_requests": [],
+  "unknown_observations": false
+}

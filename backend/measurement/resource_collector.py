@@ -1,0 +1,305 @@
+import json
+import ipaddress
+import socket
+import sys
+import time
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import urlparse
+
+from playwright.sync_api import Browser, Error as PlaywrightError, Request, Response, sync_playwright
+
+from backend.measurement.network_mode import (
+    build_network_mode_report,
+    chromium_launch_args,
+    UnsupportedNetworkModeError,
+)
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DATA_DIRECTORY = PROJECT_ROOT / "data"
+
+
+def validate_url(url: str) -> str:
+    parsed = urlparse(url.strip())
+
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("URL must start with http:// or https://")
+    if not parsed.hostname:
+        raise ValueError("URL must include a hostname")
+    if parsed.username or parsed.password:
+        raise ValueError("URLs containing credentials are not allowed")
+
+    hostname = parsed.hostname.lower()
+    if hostname == "localhost" or hostname.endswith(".localhost"):
+        raise ValueError("Localhost targets are not allowed in the Phase 2 collector")
+
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        address = None
+
+    if address is not None and (address.is_private or address.is_loopback or address.is_link_local):
+        raise ValueError("Private and loopback IP addresses are not allowed")
+
+    return url.strip()
+
+
+def _elapsed_milliseconds(start_time: float) -> float:
+    return round((time.perf_counter() - start_time) * 1000, 3)
+
+
+def collect_resources(
+    url: str,
+    timeout_ms: int = 30000,
+    headless: bool = True,
+    measurement_mode: str = "unrestricted",
+) -> dict:
+    target_url = validate_url(url)
+    launch_args = chromium_launch_args(measurement_mode)
+    network_mode = build_network_mode_report(measurement_mode)
+    measurement_id = str(uuid.uuid4())
+    started_at = datetime.now(timezone.utc).isoformat()
+    measurement_start = time.perf_counter()
+    resources: dict[str, dict] = {}
+    observed_address_families: set[str] = set()
+    navigation: dict = {
+        "requested_url": target_url,
+        "completed": False,
+        "timed_out": False,
+        "http_status": None,
+        "final_url": None,
+        "document_title": None,
+        "duration_ms": None,
+        "error": None,
+        "error_type": None,
+    }
+
+    def on_request(request: Request) -> None:
+        request_url = request.url
+        if request_url not in resources:
+            parsed = urlparse(request_url)
+            resources[request_url] = {
+                "url": request_url,
+                "hostname": parsed.hostname,
+                "method": request.method,
+                "resource_type": request.resource_type,
+                "http_status": None,
+                "success": None,
+                "timing": {
+                    "request_started_at_ms": _elapsed_milliseconds(measurement_start),
+                    "response_received_at_ms": None,
+                    "duration_ms": None,
+                },
+                "failure": None,
+                "raw_evidence": {
+                    "is_navigation_request": request.is_navigation_request(),
+                    "frame_url": request.frame.url if request.frame else None,
+                    "request_post_data": request.post_data,
+                },
+                "_started_perf": time.perf_counter(),
+                "_response_evidence": None,
+            }
+
+    def on_response(response: Response) -> None:
+        resource = resources.get(response.request.url)
+        if resource is None:
+            on_request(response.request)
+            resource = resources[response.request.url]
+
+        resource["http_status"] = response.status
+        resource["success"] = 200 <= response.status < 400
+        resource["timing"]["response_received_at_ms"] = _elapsed_milliseconds(measurement_start)
+        resource["timing"]["duration_ms"] = _elapsed_milliseconds(resource["_started_perf"])
+        resource["raw_evidence"]["response"] = {
+            "status_text": response.status_text,
+            "from_service_worker": response.from_service_worker,
+            "request_headers": dict(response.request.headers),
+            "response_headers": dict(response.headers),
+        }
+
+    def on_request_failed(request: Request, failure: str) -> None:
+        resource = resources.get(request.url)
+        if resource is None:
+            on_request(request)
+            resource = resources[request.url]
+
+        resource["success"] = False
+        resource["timing"]["duration_ms"] = _elapsed_milliseconds(resource["_started_perf"])
+        resource["failure"] = {
+            "browser_error": failure,
+            "browser_error_text": request.failure,
+        }
+
+    browser: Browser | None = None
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=headless, args=launch_args)
+            page = browser.new_page()
+
+            page.on("request", on_request)
+            page.on("response", on_response)
+            page.on("requestfailed", lambda request: on_request_failed(request, request.failure))
+
+            cdp_session = page.context.new_cdp_session(page)
+            cdp_session.send("Network.enable")
+
+            def on_response_extra_info(event: dict) -> None:
+                remote_address = event.get("remoteIPAddress")
+                if not remote_address:
+                    return
+                try:
+                    address = ipaddress.ip_address(remote_address)
+                except ValueError:
+                    return
+                observed_address_families.add(
+                    "ipv4" if address.version == 4 else "ipv6"
+                )
+
+            cdp_session.on("Network.responseReceivedExtraInfo", on_response_extra_info)
+
+            try:
+                response = page.goto(target_url, wait_until="domcontentloaded", timeout=timeout_ms)
+                navigation["completed"] = True
+                navigation["final_url"] = page.url
+                navigation["document_title"] = page.title()
+                navigation["http_status"] = response.status if response is not None else None
+            except PlaywrightError as error:
+                navigation["completed"] = False
+                navigation["error"] = str(error)
+                navigation["error_type"] = type(error).__name__
+                navigation["timed_out"] = "Timeout" in str(error) or "timeout" in str(error)
+            except Exception as error:
+                navigation["completed"] = False
+                navigation["error"] = str(error)
+                navigation["error_type"] = type(error).__name__
+
+            page.wait_for_timeout(1000)
+            navigation["duration_ms"] = _elapsed_milliseconds(measurement_start)
+            page.close()
+            browser.close()
+            browser = None
+    except PlaywrightError as error:
+        navigation["completed"] = False
+        navigation["error"] = str(error)
+        navigation["error_type"] = type(error).__name__
+    except Exception as error:
+        navigation["completed"] = False
+        navigation["error"] = str(error)
+        navigation["error_type"] = type(error).__name__
+    finally:
+        if browser is not None:
+            browser.close()
+
+    cleaned_resources = []
+    for resource in resources.values():
+        resource.pop("_started_perf", None)
+        resource.pop("_response_evidence", None)
+        cleaned_resources.append(resource)
+
+    if observed_address_families:
+        network_mode["observed_connection_address_families"] = sorted(
+            observed_address_families
+        )
+        if measurement_mode == "ipv4_only":
+            network_mode["enforcement_verification_status"] = (
+                "verified_ipv4_only"
+                if observed_address_families == {"ipv4"}
+                else "failed_or_mixed_address_families"
+            )
+            network_mode["verification_evidence"]["remote_peer_verification"] = (
+                "observed_remote_addresses"
+            )
+
+    network_mode["measurement_completed_at"] = datetime.now(timezone.utc).isoformat()
+
+    report = {
+        "schema_version": "2.0",
+        "measurement_id": measurement_id,
+        "started_at": started_at,
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "target_url": target_url,
+        "measurement_mode": measurement_mode,
+        "network_mode": network_mode,
+        "requested_measurement_mode": measurement_mode,
+        "network_enforcement_mechanism": network_mode["network_enforcement_mechanism"],
+        "enforcement_verification_status": network_mode["enforcement_verification_status"],
+        "verification_evidence": network_mode["verification_evidence"],
+        "observed_connection_address_families": sorted(observed_address_families),
+        "nat64_status": network_mode["nat64_status"],
+        "navigation": navigation,
+        "resources": cleaned_resources,
+        "summary": {
+            "total_resources": len(cleaned_resources),
+            "successful_or_http_success": sum(
+                1 for resource in cleaned_resources if resource["success"] is True
+            ),
+            "failed": sum(
+                1 for resource in cleaned_resources if resource["success"] is False
+            ),
+            "status_unknown": sum(
+                1 for resource in cleaned_resources if resource["success"] is None
+            ),
+        },
+    }
+
+    DATA_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    hostname = urlparse(target_url).hostname or "unknown-host"
+    safe_hostname = "".join(
+        character if character.isalnum() or character in "-." else "-"
+        for character in hostname
+    )
+    output_path = DATA_DIRECTORY / (
+        f"phase3_{measurement_mode}_{safe_hostname}_{timestamp}_{measurement_id[:8]}.json"
+    )
+
+    with output_path.open("w", encoding="utf-8") as json_file:
+        json.dump(report, json_file, indent=2)
+
+    report["output_file"] = str(output_path)
+    return report
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        print(
+            "Usage: python -m backend.measurement.resource_collector "
+            "<website-url> [timeout-ms] [unrestricted|ipv4_only|ipv6_only]"
+        )
+        return 2
+
+    url = sys.argv[1]
+    timeout_ms = int(sys.argv[2]) if len(sys.argv) > 2 else 30000
+    measurement_mode = sys.argv[3] if len(sys.argv) > 3 else "unrestricted"
+
+    try:
+        report = collect_resources(
+            url,
+            timeout_ms=timeout_ms,
+            measurement_mode=measurement_mode,
+        )
+    except UnsupportedNetworkModeError as error:
+        print(f"Unsupported measurement mode: {error}")
+        return 3
+    except ValueError as error:
+        print(f"Invalid URL: {error}")
+        return 2
+    except Exception as error:
+        print(f"Collector error: {type(error).__name__}: {error}")
+        return 1
+
+    print(json.dumps({
+        "measurement_id": report["measurement_id"],
+        "target_url": report["target_url"],
+        "navigation": report["navigation"],
+        "summary": report["summary"],
+        "output_file": report["output_file"],
+    }, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

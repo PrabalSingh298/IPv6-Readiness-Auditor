@@ -1,0 +1,292 @@
+{
+  "schema_version": "1-firewall-poc-nat64",
+  "captured_at": "2026-11-23T07:35:52.003408+00:00",
+  "active_addresses": {
+    "ipv4": [
+      {
+        "InterfaceAlias": "Wi-Fi",
+        "InterfaceIndex": 6,
+        "IPAddress": "10.48.162.252",
+        "PrefixLength": 24,
+        "AddressState": 4
+      },
+      {
+        "InterfaceAlias": "Loopback Pseudo-Interface 1",
+        "InterfaceIndex": 1,
+        "IPAddress": "127.0.0.1",
+        "PrefixLength": 8,
+        "AddressState": 4
+      }
+    ],
+    "ipv6": [
+      {
+        "InterfaceAlias": "Wi-Fi",
+        "InterfaceIndex": 6,
+        "IPAddress": "fe80::56b2:242a:ccbe:a86%6",
+        "PrefixLength": 64,
+        "AddressState": 4
+      },
+      {
+        "InterfaceAlias": "Wi-Fi",
+        "InterfaceIndex": 6,
+        "IPAddress": "2401:4900:38c8:b4c7:c513:d3d5:8023:4c42",
+        "PrefixLength": 128,
+        "AddressState": 4
+      },
+      {
+        "InterfaceAlias": "Wi-Fi",
+        "InterfaceIndex": 6,
+        "IPAddress": "2401:4900:38c8:b4c7:41a0:1c27:2d2a:c8e",
+        "PrefixLength": 64,
+        "AddressState": 4
+      },
+      {
+        "InterfaceAlias": "Loopback Pseudo-Interface 1",
+        "InterfaceIndex": 1,
+        "IPAddress": "::1",
+        "PrefixLength": 128,
+        "AddressState": 4
+      }
+    ]
+  },
+  "default_routes": [
+    {
+      "AddressFamily": 2,
+      "DestinationPrefix": "0.0.0.0/0",
+      "NextHop": "10.48.162.49",
+      "InterfaceAlias": "Wi-Fi",
+      "RouteMetric": 0,
+      "State": 0
+    },
+    {
+      "AddressFamily": 23,
+      "DestinationPrefix": "::/0",
+      "NextHop": "fe80::a42a:d8ff:feb2:5b21",
+      "InterfaceAlias": "Wi-Fi",
+      "RouteMetric": 16,
+      "State": 0
+    }
+  ],
+  "dns_servers": [
+    {
+      "InterfaceAlias": "Wi-Fi 2",
+      "InterfaceIndex": 8,
+      "AddressFamily": 2,
+      "ServerAddresses": []
+    },
+    {
+      "InterfaceAlias": "Wi-Fi 2",
+      "InterfaceIndex": 8,
+      "AddressFamily": 23,
+      "ServerAddresses": [
+        "fec0:0:0:ffff::1",
+        "fec0:0:0:ffff::2",
+        "fec0:0:0:ffff::3"
+      ]
+    },
+    {
+      "InterfaceAlias": "Wi-Fi 3",
+      "InterfaceIndex": 3,
+      "AddressFamily": 2,
+      "ServerAddresses": []
+    },
+    {
+      "InterfaceAlias": "Wi-Fi 3",
+      "InterfaceIndex": 3,
+      "AddressFamily": 23,
+      "ServerAddresses": [
+        "fec0:0:0:ffff::1",
+        "fec0:0:0:ffff::2",
+        "fec0:0:0:ffff::3"
+      ]
+    },
+    {
+      "InterfaceAlias": "Wi-Fi",
+      "InterfaceIndex": 6,
+      "AddressFamily": 2,
+      "ServerAddresses": [
+        "10.48.162.49"
+      ]
+    },
+    {
+      "InterfaceAlias": "Wi-Fi",
+      "InterfaceIndex": 6,
+      "AddressFamily": 23,
+      "ServerAddresses": [
+        "2401:4900:38c8:b4c7::8d"
+      ]
+    },
+    {
+      "InterfaceAlias": "Ethernet",
+      "InterfaceIndex": 17,
+      "AddressFamily": 2,
+      "ServerAddresses": [
+        "172.17.1.1",
+        "172.17.1.2"
+      ]
+    },
+    {
+      "InterfaceAlias": "Ethernet",
+      "InterfaceIndex": 17,
+      "AddressFamily": 23,
+      "ServerAddresses": []
+    },
+    {
+      "InterfaceAlias": "Loopback Pseudo-Interface 1",
+      "InterfaceIndex": 1,
+      "AddressFamily": 2,
+      "ServerAddresses": []
+    },
+    {
+      "InterfaceAlias": "Loopback Pseudo-Interface 1",
+      "InterfaceIndex": 1,
+      "AddressFamily": 23,
+      "ServerAddresses": [
+        "fec0:0:0:ffff::1",
+        "fec0:0:0:ffff::2",
+        "fec0:0:0:ffff::3"
+      ]
+    }
+  ],
+  "ipv6_routes": [
+    {
+      "DestinationPrefix": "ff00::/8",
+      "NextHop": "::",
+      "InterfaceAlias": "Wi-Fi 2",
+      "RouteMetric": 256,
+      "State": 0
+    },
+    {
+      "DestinationPrefix": "ff00::/8",
+      "NextHop": "::",
+      "InterfaceAlias": "Wi-Fi 3",
+      "RouteMetric": 256,
+      "State": 0
+    },
+    {
+      "DestinationPrefix": "ff00::/8",
+      "NextHop": "::",
+      "InterfaceAlias": "Wi-Fi",
+      "RouteMetric": 256,
+      "State": 0
+    },
+    {
+      "DestinationPrefix": "ff00::/8",
+      "NextHop": "::",
+      "InterfaceAlias": "Loopback Pseudo-Interface 1",
+      "RouteMetric": 256,
+      "State": 0
+    },
+    {
+      "DestinationPrefix": "fe80::fcbf:16af:69bc:15ec/128",
+      "NextHop": "::",
+      "InterfaceAlias": "Wi-Fi 3",
+      "RouteMetric": 256,
+      "State": 0
+    },
+    {
+      "DestinationPrefix": "fe80::56b2:242a:ccbe:a86/128",
+      "NextHop": "::",
+      "InterfaceAlias": "Wi-Fi",
+      "RouteMetric": 256,
+      "State": 0
+    },
+    {
+      "DestinationPrefix": "fe80::1ee0:710d:d8e6:8088/128",
+      "NextHop": "::",
+      "InterfaceAlias": "Wi-Fi 2",
+      "RouteMetric": 256,
+      "State": 0
+    },
+    {
+      "DestinationPrefix": "fe80::/64",
+      "NextHop": "::",
+      "InterfaceAlias": "Wi-Fi 2",
+      "RouteMetric": 256,
+      "State": 0
+    },
+    {
+      "DestinationPrefix": "fe80::/64",
+      "NextHop": "::",
+      "InterfaceAlias": "Wi-Fi 3",
+      "RouteMetric": 256,
+      "State": 0
+    },
+    {
+      "DestinationPrefix": "fe80::/64",
+      "NextHop": "::",
+      "InterfaceAlias": "Wi-Fi",
+      "RouteMetric": 256,
+      "State": 0
+    },
+    {
+      "DestinationPrefix": "2401:4900:38c8:b4c7:c513:d3d5:8023:4c42/128",
+      "NextHop": "::",
+      "InterfaceAlias": "Wi-Fi",
+      "RouteMetric": 256,
+      "State": 0
+    },
+    {
+      "DestinationPrefix": "2401:4900:38c8:b4c7:41a0:1c27:2d2a:c8e/128",
+      "NextHop": "::",
+      "InterfaceAlias": "Wi-Fi",
+      "RouteMetric": 256,
+      "State": 0
+    },
+    {
+      "DestinationPrefix": "2401:4900:38c8:b4c7::/64",
+      "NextHop": "::",
+      "InterfaceAlias": "Wi-Fi",
+      "RouteMetric": 16,
+      "State": 0
+    },
+    {
+      "DestinationPrefix": "::1/128",
+      "NextHop": "::",
+      "InterfaceAlias": "Loopback Pseudo-Interface 1",
+      "RouteMetric": 256,
+      "State": 0
+    },
+    {
+      "DestinationPrefix": "::/0",
+      "NextHop": "fe80::a42a:d8ff:feb2:5b21",
+      "InterfaceAlias": "Wi-Fi",
+      "RouteMetric": 16,
+      "State": 0
+    }
+  ],
+  "ipv4only_arpa_a_records": [
+    {
+      "Name": "ipv4only.arpa",
+      "Type": 1,
+      "IPAddress": "192.0.0.170"
+    },
+    {
+      "Name": "ipv4only.arpa",
+      "Type": 1,
+      "IPAddress": "192.0.0.171"
+    }
+  ],
+  "ipv4only_arpa_aaaa_records": {
+    "Name": "ipv4only.arpa",
+    "Type": 6,
+    "IPAddress": null
+  },
+  "dns64_analysis": {
+    "addresses": [],
+    "dns64_synthesis_evidence": "not_observed",
+    "interpretation": "No AAAA result was observed; DNS64 remains unknown, not proven absent."
+  },
+  "well_known_nat64_prefix_route": null,
+  "teredo_status": {
+    "raw_output": "Teredo Parameters\n---------------------------------------------\nType                    : disabled\nServer Name             : win1910.ipv6.microsoft.com.\nClient Refresh Interval : 30 seconds\nClient Port             : unspecified\nState                   : offline\nError                   : none"
+  },
+  "clat_464xlat_indicators": null,
+  "nat64_status": "unknown",
+  "limitations": [
+    "A missing 64:ff9b::/96 route does not prove NAT64 is absent.",
+    "NAT64 may use a network-specific prefix.",
+    "DNS64 synthesis and NAT64 translation are separate mechanisms.",
+    "Available Windows diagnostics do not conclusively identify 464XLAT."
+  ]
+}

@@ -1,0 +1,44 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+data/*.json
+data/*.csv
+*.log
+
+
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Generated measurement data
+data/**/*.json
+data/**/*.csv
+data/*.json
+data/*.csv
+
+# Logs
+*.log
+
+# Environment variables and secrets
+.env
+.env.*
+
+# IDE settings
+.vscode/
+.idea/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Playwright generated reports
+test-results/
+playwright-report/
