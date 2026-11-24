@@ -166,7 +166,12 @@ def build_experiment_state(
         "protocol": rule["protocol"],
         "creation_time": iso_utc(created),
         "expiry_time": iso_utc(created + timedelta(seconds=duration_seconds)),
+        "creation_status": "preserved",
+        "application_status": "pending",
         "cleanup_status": "pending",
+        "cleanup_verified_absent": False,
+        "cleanup_persistence_status": "pending",
+        "final_status": "pending",
         "watchdog": {
             "process_id": None,
             "started": False,

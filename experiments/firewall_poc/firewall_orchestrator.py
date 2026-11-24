@@ -17,7 +17,14 @@ from firewall_controller import (
     validate_executable,
     validate_experiment_state,
 )
-from firewall_adapter import MockFirewallAdapter
+from firewall_adapter import (
+    CreatedUnverifiedError,
+    ExistingRuleError,
+    ExactNamePropertyConflictError,
+    MockFirewallAdapter,
+    WindowsFirewallAdapter,
+)
+REAL_FIREWALL_APPLICATION_ENABLED = False
 from firewall_state import (
     SCHEMA_VERSION,
     atomic_json,
@@ -38,6 +45,14 @@ def validate_manifest(manifest):
     return validate_canonical_state(manifest)
 
 
+def sync_lifecycle_state(manifest):
+    errors = validate_canonical_state(manifest)
+    if errors:
+        raise RuntimeError("invalid lifecycle state: " + "; ".join(errors))
+    atomic_json(RECOVERY_FILE, manifest)
+    save_tracked_rules(manifest)
+
+
 def build_recovery_manifest(mode, rule, duration_seconds=900):
     created = datetime.now(timezone.utc)
     return {
@@ -54,7 +69,11 @@ def build_recovery_manifest(mode, rule, duration_seconds=900):
         "protocol": rule["protocol"],
         "creation_time": iso_utc(created),
         "expiry_time": iso_utc(created + timedelta(seconds=duration_seconds)),
+        "creation_status": "preserved",
+        "application_status": "pending",
         "cleanup_status": "pending",
+        "cleanup_verified_absent": False,
+        "cleanup_persistence_status": "pending",
         "watchdog": {
             "process_id": None,
             "started": False,
@@ -86,12 +105,20 @@ def execute_browser_measurement(url):
 
 
 def cleanup_with_adapter(manifest, adapter, retries=1):
-    found = adapter.find_exact(manifest)
+    try:
+        found = adapter.find_exact(manifest)
+    except ExactNamePropertyConflictError as error:
+        return {
+            "cleanup_status": "exact_name_property_conflict",
+            "attempts": 0,
+            "verified_absent": False,
+            "error": str(error),
+        }
     if found is None:
         return {"cleanup_status": "cleaned", "attempts": 0, "verified_absent": True}
-    if found == "MISMATCH":
+    if found in ("MISMATCH", "EXACT_NAME_PROPERTY_CONFLICT"):
         return {"cleanup_status": "failed", "attempts": 0, "verified_absent": False,
-                "error": "exact rule identity mismatch"}
+                "error": "exact rule identity or property conflict"}
     if hasattr(adapter, "matches_properties") and not adapter.matches_properties(found, manifest):
         return {"cleanup_status": "failed", "attempts": 0, "verified_absent": False,
                 "error": "rule properties mismatch"}
@@ -144,8 +171,7 @@ def run_orchestration(
             raise RuntimeError("invalid recovery manifest: " + "; ".join(manifest_errors))
 
         try:
-            atomic_json(RECOVERY_FILE, manifest)
-            save_tracked_rules(manifest)
+            sync_lifecycle_state(manifest)
         except BaseException as error:
             state_write_exception = f"{type(error).__name__}: {error}"
             raise
@@ -155,10 +181,13 @@ def run_orchestration(
                 raise RuntimeError(
                     "Real firewall application is disabled; explicit opt-in is required"
                 )
-            if not isinstance(adapter, MockFirewallAdapter):
-                raise RuntimeError(
-                    "Tests and this implementation require MockFirewallAdapter unless a future approved Windows adapter is separately enabled"
-                )
+            if isinstance(adapter, WindowsFirewallAdapter):
+                if not REAL_FIREWALL_APPLICATION_ENABLED:
+                    raise RuntimeError(
+                        "WindowsFirewallAdapter is implemented but execution is disabled"
+                    )
+            elif not isinstance(adapter, MockFirewallAdapter):
+                raise RuntimeError("No fallback adapter is permitted")
             if not is_administrator():
                 raise PermissionError("Administrator privileges are required")
             watchdog_pid = launch_watchdog(manifest)
@@ -170,15 +199,50 @@ def run_orchestration(
                 "status": "running",
             }
             manifest["cleanup_status"] = "active"
-            atomic_json(RECOVERY_FILE, manifest)
+            try:
+                sync_lifecycle_state(manifest)
+            except BaseException as error:
+                state_write_exception = f"{type(error).__name__}: {error}"
+                raise
 
             try:
                 adapter.apply_exact(manifest)
+                verified = adapter.find_exact(manifest)
+                if verified is None:
+                    raise RuntimeError(
+                        "Rule application succeeded without a verified exact rule"
+                    )
+                if hasattr(adapter, "matches_properties") and not adapter.matches_properties(verified, manifest):
+                    raise RuntimeError("Applied rule failed property verification")
                 rule_applied = True
+                manifest["creation_status"] = "active"
+                manifest["application_status"] = "active"
                 manifest["cleanup_status"] = "active"
+                try:
+                    sync_lifecycle_state(manifest)
+                except BaseException as sync_error:
+                    state_write_exception = f"{type(sync_error).__name__}: {sync_error}"
+                    manifest["cleanup_status"] = "failed"
+                    manifest["application_status"] = "application_failed"
+                    raise
             except BaseException as error:
                 application_exception = f"{type(error).__name__}: {error}"
-                manifest["cleanup_status"] = "failed"
+                if isinstance(error, ExistingRuleError):
+                    manifest["cleanup_status"] = "already_exists"
+                    manifest["application_status"] = "already_exists"
+                elif isinstance(error, CreatedUnverifiedError):
+                    manifest["cleanup_status"] = "created_unverified"
+                    manifest["application_status"] = "created_unverified"
+                elif isinstance(error, ExactNamePropertyConflictError):
+                    manifest["cleanup_status"] = "exact_name_property_conflict"
+                    manifest["application_status"] = "exact_name_property_conflict"
+                else:
+                    manifest["cleanup_status"] = "failed"
+                    manifest["application_status"] = "application_failed"
+                try:
+                    sync_lifecycle_state(manifest)
+                except BaseException as sync_error:
+                    state_write_exception = f"{type(sync_error).__name__}: {sync_error}"
                 raise
 
         if dry_run:
@@ -187,7 +251,7 @@ def run_orchestration(
                 "started": False,
                 "status": "dry_run",
             }
-            atomic_json(RECOVERY_FILE, manifest)
+            sync_lifecycle_state(manifest)
 
         browser = browser_runner or (lambda: execute_browser_measurement(url))
         try:
@@ -205,7 +269,8 @@ def run_orchestration(
         if application_exception is None and isinstance(error, PermissionError):
             application_exception = original_exception
         if manifest is not None:
-            manifest["final_status"] = "initialization_or_application_failed"
+            if browser_exception is None:
+                manifest["final_status"] = "initialization_or_application_failed"
     finally:
         if rule_applied:
             try:
@@ -251,11 +316,14 @@ def run_orchestration(
                 manifest["final_status"] = "cleanup_failed"
             elif manifest.get("final_status") == "browser_completed":
                 manifest["final_status"] = "completed"
+            manifest["cleanup_persistence_status"] = "pending"
             try:
-                atomic_json(RECOVERY_FILE, manifest)
+                manifest["cleanup_persistence_status"] = "persisted"
+                sync_lifecycle_state(manifest)
             except BaseException as error:
                 state_write_exception = f"{type(error).__name__}: {error}"
                 manifest["state_write_exception"] = state_write_exception
+                manifest["cleanup_persistence_status"] = "failed"
                 if rule_applied and cleanup_result["cleanup_status"] == "cleaned":
                     cleanup_result["cleanup_status"] = "cleaned_unpersisted"
                     manifest["cleanup_status"] = "cleaned_unpersisted"

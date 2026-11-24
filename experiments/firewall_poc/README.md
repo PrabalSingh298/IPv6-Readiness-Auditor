@@ -301,7 +301,15 @@ information. Cleanup no longer reads a separate nested rules array.
 The orchestrator is dry-run by default. It never invokes `New-NetFirewallRule`
 or `Remove-NetFirewallRule`. The controller has no real application option.
 `WindowsFirewallAdapter` exists only as a future integration boundary and is
-not enabled or tested in this implementation.
+implemented but execution-disabled. It uses an injected PowerShell runner and
+is covered only by mock-runner tests. No real adapter command is selectable
+through the orchestrator or command line.
+
+The adapter methods are `apply_exact`, `find_exact`, `remove_exact`, and
+`verify_absent`. It passes rule values through PowerShell environment variables
+instead of interpolating them into executable script text. Structured JSON must
+contain exactly zero or one matching rule and all required properties. Creation
+and removal are followed by exact-rule verification.
 
 Recovery reconstruction accepts only a canonical, internally consistent manifest.
 Missing or malformed state plus missing or malformed recovery data refuses
@@ -312,3 +320,21 @@ Timestamps must be timezone-aware ISO 8601 values; expiry must be later than
 creation. Watchdog metadata must contain process ID, started status, and a
 supported status. Expired recovery manifests are preserved for manual review and
 are never used for automatic deletion.
+
+Shared stale-state policy:
+
+- Valid active primary state before expiry: wait for the controlled deadline.
+- Valid active primary state at expiry: run one exact cleanup attempt.
+- Primary state already marked `cleaned`: no removal operation.
+- Stale or inconsistent recovery manifest: refuse automatic cleanup.
+- Missing/corrupted primary with no valid recovery: refuse cleanup.
+- Conflicting primary and recovery identity: refuse cleanup.
+
+State and recovery metadata are synchronized during lifecycle transitions.
+`CREATED_UNVERIFIED` and `EXACT_NAME_PROPERTY_CONFLICT` prevent verification,
+browser execution, and removal. Cleanup is successful only if absence is
+verified and final state persistence succeeds.
+
+Normal watchdog expiry cleans a valid active primary state. An expired or
+inconsistent recovery manifest is never reconstructed for deletion. A state
+marked `cleaned` is not accepted as authority for stale cleanup.

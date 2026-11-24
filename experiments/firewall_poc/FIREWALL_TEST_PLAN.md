@@ -171,13 +171,29 @@ rule structure.
 
 The orchestrator is dry-run by default. It has no real firewall application
 option in the current PoC, and the `WindowsFirewallAdapter` is not enabled.
-The mock adapter is used for orchestration and recovery tests only.
+The mock adapter is used for orchestration and recovery tests. The Windows
+adapter is implemented with an injectable runner, exact-name queries,
+property verification, and post-removal absence checks, but it remains
+execution-disabled and untested against real Windows Firewall.
 
 The canonical timestamps must include a timezone. Expiry must be later than
 creation. Recovery manifests are stale and refused for automatic cleanup after
 expiry. If the primary state is missing and the recovery manifest is expired or
 inconsistent, the watchdog leaves both files untouched and requires manual
 administrator review. It never broad-deletes firewall rules.
+
+Normal watchdog expiry is distinct from stale recovery: a valid active primary
+state may reach expiry and trigger one controlled cleanup. A stale or
+inconsistent recovery manifest never authorizes deletion. A state marked cleaned
+does not authorize stale cleanup.
+
+PowerShell cleanup reports:
+
+- Invalid identity/state: cleanup refused.
+- Rule remains: removal failed or incomplete.
+- Rule absent: removal verified.
+- Rule absent but state write fails: `cleaned_unpersisted`.
+- State write verified: cleanup persisted.
 
 If final local state persistence fails, cleanup verification and state-write
 failure are reported separately. Cleanup is not marked simply `cleaned` when

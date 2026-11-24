@@ -60,6 +60,8 @@ class FirewallPoCTests(unittest.TestCase):
         self.assertIn("IPv6-Auditor-Experimental-", script)
         self.assertIn("$TrackedName.StartsWith", script)
         self.assertIn("$_.Group -eq $TrackedGroup", script)
+        self.assertIn("$ExactMatches.Count -gt 1", script)
+        self.assertIn("stale cleaned state", script)
 
     def test_unknown_remote_peer_is_inconclusive(self):
         result = verify({

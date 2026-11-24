@@ -12,6 +12,13 @@ from firewall_state import (
     atomic_json,
     load_json,
     is_stale,
+    classify_state_pair,
+    POLICY_ACTIVE_BEFORE_EXPIRY,
+    POLICY_NORMAL_EXPIRY_CLEANUP,
+    POLICY_ALREADY_CLEANED,
+    POLICY_STALE_RECOVERY,
+    POLICY_MISSING_OR_INVALID,
+    POLICY_CONFLICT,
     parse_utc,
     validate_canonical_state,
 )
@@ -50,9 +57,6 @@ def load_state(path: Path) -> dict | None:
     errors = validate_canonical_state(state)
     if errors:
         write_log("invalid primary state: " + "; ".join(errors))
-        return None
-    if is_stale(state):
-        write_log("primary state is expired; refusing automatic cleanup")
         return None
     return state
 
@@ -111,6 +115,19 @@ def main() -> int:
         recovery = args.state_file.with_name("recovery_manifest.json")
 
     state = load_state(args.state_file)
+    recovery_state = load_json(recovery)
+    policy, selected = classify_state_pair(state, recovery_state)
+
+    if policy == POLICY_ALREADY_CLEANED:
+        write_log("primary state is already cleaned")
+        return 0
+    if policy == POLICY_CONFLICT:
+        write_log("primary and recovery state conflict; cleanup refused")
+        return 5
+    if policy in (POLICY_STALE_RECOVERY, POLICY_MISSING_OR_INVALID):
+        write_log("missing, invalid, or stale recovery state; cleanup refused")
+        return 5
+
     if state is None:
         state = reconstruct_state(args.state_file, recovery)
         if state is None:
@@ -175,6 +192,9 @@ def main() -> int:
         if result.returncode == 0:
             write_log(f"cleanup helper succeeded on attempt {attempt}")
             return 0
+        if result.returncode == 6:
+            write_log("cleanup removal verified but state persistence failed")
+            return 6
         write_log(
             f"cleanup helper attempt {attempt} failed with exit "
             f"{result.returncode}: {result.stderr.strip()}"

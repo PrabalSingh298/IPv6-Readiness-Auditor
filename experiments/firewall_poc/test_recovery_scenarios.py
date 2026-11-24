@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -13,7 +14,18 @@ from firewall_orchestrator import (
     validate_manifest,
 )
 from firewall_controller import proposed_rule, validate_experiment_state, is_stale_state
-from firewall_state import is_stale, parse_utc
+from firewall_state import (
+    POLICY_ACTIVE_BEFORE_EXPIRY,
+    POLICY_NORMAL_EXPIRY_CLEANUP,
+    POLICY_ALREADY_CLEANED,
+    POLICY_STALE_RECOVERY,
+    POLICY_MISSING_OR_INVALID,
+    POLICY_CONFLICT,
+    classify_state_pair,
+    is_stale,
+    parse_utc,
+    validate_safe_internal_name,
+)
 
 
 def manifest_and_rule():
@@ -37,6 +49,106 @@ def adapter_for(manifest, **kwargs):
 
 
 class RecoveryScenarioTests(unittest.TestCase):
+    def test_primary_before_expiry_policy(self):
+        manifest, _ = manifest_and_rule()
+        policy, selected = classify_state_pair(manifest, manifest)
+        self.assertEqual(policy, POLICY_ACTIVE_BEFORE_EXPIRY)
+        self.assertIs(selected, manifest)
+
+    def test_primary_normal_expiry_policy(self):
+        manifest, _ = manifest_and_rule()
+        manifest["creation_time"] = "1999-12-31T23:59:00Z"
+        manifest["expiry_time"] = "2000-01-01T00:00:00Z"
+        manifest["cleanup_status"] = "active"
+        policy, selected = classify_state_pair(manifest, manifest)
+        self.assertEqual(policy, POLICY_NORMAL_EXPIRY_CLEANUP)
+
+    def test_already_cleaned_policy_refuses_repeat(self):
+        manifest, _ = manifest_and_rule()
+        manifest["expiry_time"] = (
+            datetime.now(timezone.utc) + timedelta(seconds=300)
+        ).isoformat().replace("+00:00", "Z")
+        manifest["cleanup_status"] = "cleaned"
+        policy, selected = classify_state_pair(manifest, manifest)
+        self.assertEqual(policy, POLICY_ALREADY_CLEANED)
+
+    def test_stale_cleaned_state_is_refused(self):
+        manifest, _ = manifest_and_rule()
+        manifest["creation_time"] = "1999-12-31T23:59:00Z"
+        manifest["expiry_time"] = "2000-01-01T00:00:00Z"
+        manifest["cleanup_status"] = "cleaned"
+        policy, selected = classify_state_pair(manifest, manifest)
+        self.assertEqual(policy, POLICY_STALE_RECOVERY)
+
+    def test_stale_recovery_policy(self):
+        manifest, _ = manifest_and_rule()
+        manifest["creation_time"] = "1999-12-31T23:59:00Z"
+        manifest["expiry_time"] = "2000-01-01T00:00:00Z"
+        policy, selected = classify_state_pair(None, manifest)
+        self.assertEqual(policy, POLICY_STALE_RECOVERY)
+
+    def test_missing_primary_and_recovery_policy(self):
+        policy, selected = classify_state_pair(None, None)
+        self.assertEqual(policy, POLICY_MISSING_OR_INVALID)
+        self.assertIsNone(selected)
+
+    def test_conflicting_primary_and_recovery_policy(self):
+        primary, _ = manifest_and_rule()
+        recovery, _ = manifest_and_rule()
+        recovery["exact_rule_name"] = "IPv6-Auditor-Experimental-other"
+        recovery["display_name"] = recovery["exact_rule_name"]
+        recovery["group"] = "IPv6-Auditor-Experimental-other"
+        policy, selected = classify_state_pair(primary, recovery)
+        self.assertEqual(policy, POLICY_CONFLICT)
+    def test_wildcard_internal_name_rejected_by_canonical_validation(self):
+        manifest, rule = manifest_and_rule()
+        manifest["exact_rule_name"] = "IPv6-Auditor-Experimental-*"
+        manifest["display_name"] = manifest["exact_rule_name"]
+        manifest["group"] = "IPv6-Auditor-Experimental-*"
+        self.assertTrue(any("unsafe internal name characters" in error for error in validate_manifest(manifest)))
+        self.assertFalse(validate_safe_internal_name("*"))
+
+    def test_existing_mock_rule_is_never_applied_or_cleaned(self):
+        manifest, _ = manifest_and_rule()
+        from firewall_adapter import MockFirewallAdapter, ExistingRuleError
+        adapter = adapter_for(manifest)
+        with self.assertRaises(ExistingRuleError):
+            adapter.apply_exact(manifest)
+        self.assertEqual(adapter.apply_attempts, 1)
+
+    def test_exact_name_property_conflict_is_not_applied_or_removed(self):
+        manifest, _ = manifest_and_rule()
+        adapter = adapter_for(manifest)
+        adapter.rules[manifest["exact_rule_name"]]["protocol"] = "Tcp"
+        from firewall_adapter import ExactNamePropertyConflictError
+        with self.assertRaises(ExactNamePropertyConflictError):
+            adapter.find_exact(manifest)
+        self.assertEqual(adapter.remove_attempts, 0)
+
+    def test_created_unverified_status_preserves_recovery_without_cleanup(self):
+        manifest, _ = manifest_and_rule()
+        from firewall_adapter import MockFirewallAdapter, CreatedUnverifiedError
+        adapter = MockFirewallAdapter()
+        original_apply = adapter.apply_exact
+        def fail_verification(rule):
+            raise CreatedUnverifiedError(
+                "CREATED_UNVERIFIED: exact verification failed"
+            )
+        adapter.apply_exact = fail_verification
+        with patch("firewall_orchestrator.is_administrator", return_value=True), \
+             patch("firewall_orchestrator.launch_watchdog", return_value=1234):
+            result = run_orchestration(
+                "ipv4_only",
+                "https://example.com",
+                dry_run=False,
+                adapter=adapter,
+                allow_real_application=True,
+                browser_runner=lambda: {"navigation": {"completed": True}},
+            )
+        self.assertFalse(result["rule_applied"])
+        self.assertEqual(result["cleanup"]["cleanup_status"], "not_attempted")
+        self.assertIn("CREATED_UNVERIFIED", result["application_exception"])
+
     def test_valid_utc_timestamp(self):
         manifest, _ = manifest_and_rule()
         parsed = parse_utc("2026-11-24T19:00:00Z")
@@ -226,6 +338,13 @@ class RecoveryScenarioTests(unittest.TestCase):
         manifest["expiry_time"] = "2000-01-01T00:00:00Z"
         self.assertTrue(is_stale(manifest))
 
+    def test_expired_cleaned_state_does_not_authorize_cleanup(self):
+        manifest, _ = manifest_and_rule()
+        manifest["creation_time"] = "1999-12-31T23:59:00Z"
+        manifest["expiry_time"] = "2000-01-01T00:00:00Z"
+        manifest["cleanup_status"] = "cleaned"
+        self.assertTrue(is_stale(manifest))
+
     def test_inconsistent_recovery_manifest_is_invalid(self):
         manifest, _ = manifest_and_rule()
         manifest["remote_address"] = "0.0.0.0/0"
@@ -245,7 +364,7 @@ class RecoveryScenarioTests(unittest.TestCase):
         adapter = adapter_for(manifest)
         adapter.rules[manifest["exact_rule_name"]]["protocol"] = "Tcp"
         result = cleanup_with_adapter(manifest, adapter)
-        self.assertEqual(result["cleanup_status"], "failed")
+        self.assertEqual(result["cleanup_status"], "exact_name_property_conflict")
 
     def test_initial_state_write_exception_is_recorded_separately(self):
         import firewall_orchestrator as orchestrator
