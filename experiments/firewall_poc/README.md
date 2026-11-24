@@ -4,10 +4,9 @@ This experimental directory is isolated from the production IPv6 Readiness Audit
 
 ## Safety
 
-The default behavior is dry-run. Firewall rules are never created unless:
-
-1. The process is running with administrator privileges.
-2. The caller uses `--apply-firewall-rules`.
+The default behavior is dry-run. Firewall rules are never created by the
+current controller or orchestrator. There is no application option in this
+version; real Windows Firewall integration remains unimplemented.
 
 No existing firewall rule is modified or deleted. The cleanup scripts remove only
 rules created by this PoC and tracked in `state.json`.
@@ -40,8 +39,7 @@ Actual firewall-rule execution is not authorized yet.
   process inventory during the probe, so process coverage is not yet verified.
 - The verifier correctly marked the probe `inconclusive`.
 - Six dry-run unit tests passed.
-- A test using `--apply-firewall-rules` refused to create rules because the current
-  PowerShell session is not administrator.
+- No real `--apply-firewall-rules` operation exists in the current implementation.
 - No `state.json` file or firewall rule was created.
 
 ## Proposed rules
@@ -213,12 +211,9 @@ Both rules use `-Protocol Any`, covering TCP and UDP. Preview commands:
 .\.venv\Scripts\python.exe experiments\firewall_poc\firewall_controller.py --mode ipv6_only
 ```
 
-Administrator-only application commands, not executed:
-
-```powershell
-.\.venv\Scripts\python.exe experiments\firewall_poc\firewall_controller.py --mode ipv4_only --apply-firewall-rules
-.\.venv\Scripts\python.exe experiments\firewall_poc\firewall_controller.py --mode ipv6_only --apply-firewall-rules
-```
+No real rule-application command is available. The controller and orchestrator
+remain dry-run-only. Do not interpret proposed PowerShell snippets as executable
+PoC application commands.
 
 The cleanup script removes only display names prefixed
 `IPv6-Auditor-Experimental-` and verifies that the tracked group matches. It was
@@ -237,3 +232,83 @@ The machine-readable evidence is saved in
 The evidence-based destination selection, test matrix, future approved
 PowerShell commands, cleanup procedure, and readiness conclusion are saved in
 [FIREWALL_TEST_PLAN.md](FIREWALL_TEST_PLAN.md).
+
+## Failure-safe cleanup review
+
+The proposed recovery order is:
+
+1. Normal approved orchestration uses `try/finally` cleanup.
+2. Before a rule is created, the controller saves the exact experiment and rule
+   metadata in `state.json`, including a strict expiry.
+3. It starts an independent watchdog process with the same elevated rights.
+   The watchdog invokes the local cleanup script when expiry is reached.
+4. Missing or incomplete state refuses cleanup. Cleanup requires an exact
+   display-name/group/executable match and the PoC display-name prefix.
+5. Repeated cleanup is idempotent and marks the state `cleaned`.
+
+The watchdog is not a restart recovery mechanism. Windows Task Scheduler was
+reviewed but not selected or created: a startup/task mechanism would require
+administrator setup, create a system-level scheduled task, and require explicit
+removal. After a restart or service stop, the stale/active state must be reviewed
+and cleaned explicitly.
+
+Exact cleanup command after approval:
+
+```powershell
+Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File', "`"$PWD\experiments\firewall_poc\cleanup_firewall_rules.ps1`""
+```
+
+Immediate revalidation commands and the full destination procedure are in
+[FIREWALL_TEST_PLAN.md](FIREWALL_TEST_PLAN.md). Revalidate A/AAAA DNS and
+IPv4/IPv6 connectivity immediately before every real experiment; do not assume
+the earlier evidence is current.
+
+No firewall rule, scheduled task, network setting, or administrator privilege
+request is created by this review. The remaining decision is whether an
+administrator explicitly approves an actual, temporary experiment.
+
+## Hardened orchestration status
+
+`firewall_orchestrator.py` provides a dry-run, try/finally orchestration entry
+point. It validates mode and executable, checks administrator status, saves an
+atomic primary state file and recovery manifest, verifies watchdog startup,
+runs the browser simulation/measurement, and verifies cleanup through a mock or
+real adapter boundary.
+
+No application path is executed by dry-run tests. Mock cleanup is simulated;
+`WindowsFirewallAdapter` is a real-integration implementation only and was not
+invoked during this task.
+
+The recovery metadata records exact rule `Name`, display name, group,
+executable, remote address, direction, action, protocol, timestamps, cleanup
+status, and watchdog PID. The exact `Name` is the Windows Firewall identity;
+this design does not assume an undocumented GUID.
+
+The watchdog verifies its own administrator status and writes
+`watchdog.log`. It makes at most one bounded retry after expiry and verifies
+cleanup output. It may reconstruct missing primary state from a complete
+recovery manifest. It cannot survive process crash or Windows restart, and no
+scheduled task or service is installed.
+
+## Canonical recovery state
+
+The PoC uses one canonical JSON schema for `state.json` and
+`recovery_manifest.json`. Both contain the experiment ID, mode, internal firewall
+rule name, display name, group, executable path, remote address, direction,
+action, protocol, creation/expiry timestamps, cleanup status, and watchdog
+information. Cleanup no longer reads a separate nested rules array.
+
+The orchestrator is dry-run by default. It never invokes `New-NetFirewallRule`
+or `Remove-NetFirewallRule`. The controller has no real application option.
+`WindowsFirewallAdapter` exists only as a future integration boundary and is
+not enabled or tested in this implementation.
+
+Recovery reconstruction accepts only a canonical, internally consistent manifest.
+Missing or malformed state plus missing or malformed recovery data refuses
+cleanup. Stale state is still constrained to the exact stored identity and
+property set.
+
+Timestamps must be timezone-aware ISO 8601 values; expiry must be later than
+creation. Watchdog metadata must contain process ID, started status, and a
+supported status. Expired recovery manifests are preserved for manual review and
+are never used for automatic deletion.

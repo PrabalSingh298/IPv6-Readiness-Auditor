@@ -107,7 +107,7 @@ Verification rules:
 ### Existing controller
 
 - Dry-run is the default.
-- `--apply-firewall-rules` is explicitly required.
+- Real rule application is disabled.
 - Administrator privileges are checked but not granted.
 - The default executable is:
   `C:\Users\praba\AppData\Local\ms-playwright\chromium_headless_shell-1255\chrome-headless-shell-win64\chrome-headless-shell.exe`
@@ -129,19 +129,79 @@ must repeat process-ownership investigation before use.
 
 ### State and cleanup
 
-- Rules are appended to `experiments/firewall_poc/state.json` after a successful
-  `New-NetFirewallRule` call.
-- Cleanup accepts only display names beginning
-  `IPv6-Auditor-Experimental-` and then requires the matching tracked group.
-- Cleanup removes only the tracked display-name/group pairs.
-- Cleanup is not automatic and was not executed.
+- Before application, the controller atomically saves
+  `experiments/firewall_poc/state.json` with the experiment ID, mode, exact
+  display name, group, executable path, creation time, expiry time, cleanup
+  status, and rule fields.
+- The same elevated Python process starts an independent watchdog process that
+  waits until expiry and then invokes the local cleanup script. This covers
+  browser failure and normal `try/finally` cleanup, and provides a strict
+  timeout for Playwright/Python/terminal failures while Windows remains running.
+- A watchdog process does not survive Windows restart. It cannot, by itself,
+  protect against computer restart. The cleanup script plus stale state should
+  be run after restart; no Task Scheduler recovery mechanism is needed for the
+  dry-run/PoC design and no scheduled task is created.
+- Cleanup accepts only an exact display name/group/executable triple recorded in
+  a complete state file. The display name must begin
+  `IPv6-Auditor-Experimental-`. It never removes an unrelated rule.
+- A stale state is reported but can still be cleaned because it is the exact
+  experiment record. Missing, malformed, mismatched, or incomplete state refuses
+  cleanup. Repeated cleanup is idempotent and records `cleanup_status=cleaned`.
+- Normal completion uses `try/finally` in the approved orchestration; the
+  watchdog is the independent upper bound. If the watchdog cannot start, no
+  firewall rule is applied.
+- The experimental orchestration entry point is
+  `firewall_orchestrator.py`. It is dry-run by default and has no real
+  firewall application path in this implementation.
+- The primary state file and secondary `recovery_manifest.json` record the exact
+  Windows Firewall rule `Name`, display name, group, executable, address range,
+  direction, action, protocol, experiment timing, watchdog PID, and status.
+  Windows Firewall has no assumed GUID; `Name` is the exact internal identity.
+- The recovery manifest may reconstruct only a missing or malformed primary
+  state. Missing or corrupted state plus missing/corrupted recovery metadata
+  refuses cleanup and never performs broad deletion.
 
-Safety concerns:
+### Canonical state and implementation status
 
-- Apply and browser launch are separate operations. If the browser fails or the
-  shell is closed, the rule may remain until manual cleanup.
-- If rule creation succeeds but state saving fails, cleanup cannot identify the
-  rule reliably.
+`state.json` and `recovery_manifest.json` use the same canonical top-level
+fields: experiment ID, mode, exact rule `Name`, display name, group, executable
+path, remote address, direction, action, protocol, creation time, expiry time,
+cleanup status, and watchdog status. Cleanup does not infer a separate nested
+rule structure.
+
+The orchestrator is dry-run by default. It has no real firewall application
+option in the current PoC, and the `WindowsFirewallAdapter` is not enabled.
+The mock adapter is used for orchestration and recovery tests only.
+
+The canonical timestamps must include a timezone. Expiry must be later than
+creation. Recovery manifests are stale and refused for automatic cleanup after
+expiry. If the primary state is missing and the recovery manifest is expired or
+inconsistent, the watchdog leaves both files untouched and requires manual
+administrator review. It never broad-deletes firewall rules.
+
+If final local state persistence fails, cleanup verification and state-write
+failure are reported separately. Cleanup is not marked simply `cleaned` when
+the final manifest could not be persisted. Filesystem availability is an
+unavoidable remaining dependency.
+
+Recovery limitations and safety concerns:
+
+- `try/finally` is reliable for Python exceptions and normal browser failure
+  handling, but not for a process kill, power loss, terminal closure, or reboot.
+- The watchdog is independent of the parent Python process and terminal; it
+  protects for the configured expiry only while Windows is running.
+- The watchdog requires the same elevation as rule creation. It does not create
+  a service or scheduled task.
+- A restart, power failure, or stopping the Windows Defender Firewall service
+  can make the watchdog unavailable. Cleanup after restart is an explicit
+  administrator action.
+- A Task Scheduler mechanism could run at startup or after logon, but creating
+  it would require elevated setup and would leave a system-level recovery entry.
+  It is not selected for this PoC. If adopted later, it must use the exact
+  unique group/name state, be confined to this script, and be removed after use.
+- If state saving fails before rule creation, no rule is created. If state saving
+  becomes corrupted after application, the cleanup script refuses unrelated
+  cleanup; manual review is required.
 - One Playwright process tree is not guaranteed to cover every other browser
   session or future browser mode.
 - `-Protocol Any` is intentionally broader than TCP-only and may cover UDP.
@@ -167,7 +227,10 @@ finish or be closed before changing to the next mode.
 These are evidence and preparation only. They must not be executed until explicit
 approval is given.
 
-Recheck the destinations and executable:
+### Immediate destination revalidation
+
+Run this procedure immediately before each real experiment and again if DNS or
+network state changes. Do not reuse earlier DNS results.
 
 ```powershell
 Resolve-DnsName example.com -Type A
@@ -176,8 +239,25 @@ Resolve-DnsName ipv4.google.com -Type A
 Resolve-DnsName ipv4.google.com -Type AAAA
 Resolve-DnsName ipv6.google.com -Type A
 Resolve-DnsName ipv6.google.com -Type AAAA
+Test-NetConnection example.com -Port 443
+Test-NetConnection ipv4.google.com -Port 443
+Test-NetConnection ipv6.google.com -Port 443
+curl.exe -4 -I https://example.com
+curl.exe -6 -I https://example.com
+curl.exe -4 -I https://ipv4.google.com
+curl.exe -6 -I https://ipv4.google.com
+curl.exe -4 -I https://ipv6.google.com
+curl.exe -6 -I https://ipv6.google.com
 Test-Path "C:\Users\praba\AppData\Local\ms-playwright\chromium_headless_shell-1255\chrome-headless-shell-win64\chrome-headless-shell.exe"
 ```
+
+Acceptable preflight updates:
+
+- `ipv4.google.com` only if it has A and no AAAA and IPv4 `curl.exe -4` succeeds.
+- `ipv6.google.com` only if it has AAAA and no A and IPv6 `curl.exe -6` succeeds.
+- `example.com` as dual-stack only if both A/AAAA records and independent
+  IPv4/IPv6 connectivity are present.
+- Stop and reapprove or redesign if DNS or connectivity contradicts the matrix.
 
 Dry-run previews:
 
@@ -186,12 +266,8 @@ Dry-run previews:
 .\.venv\Scripts\python.exe experiments\firewall_poc\firewall_controller.py --mode ipv6_only
 ```
 
-Administrator application commands:
-
-```powershell
-.\.venv\Scripts\python.exe experiments\firewall_poc\firewall_controller.py --mode ipv4_only --apply-firewall-rules
-.\.venv\Scripts\python.exe experiments\firewall_poc\firewall_controller.py --mode ipv6_only --apply-firewall-rules
-```
+Real rule-application commands are intentionally unavailable. No current
+command should be used to apply or remove rules for this PoC.
 
 Browser probes:
 
@@ -211,11 +287,23 @@ After every browser probe, run:
 .\.venv\Scripts\python.exe experiments\firewall_poc\verify_connections.py <report-file>
 ```
 
-Elevated cleanup command:
+Exact elevated cleanup commands:
 
 ```powershell
 Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File', "`"$PWD\experiments\firewall_poc\cleanup_firewall_rules.ps1`""
 ```
+
+The script can be rerun; it returns already-clean once cleanup status is
+`cleaned`. Missing or incomplete `state.json` produces no rule deletion.
+
+State inspection (read-only; safe outside elevation):
+
+```powershell
+Get-Content -LiteralPath .\experiments\firewall_poc\state.json -Raw
+Get-NetFirewallRule -Group "<unique-state-group>"
+```
+
+Do not substitute broad name/group searches for the exact state triple.
 
 These commands do not run firewall cleanup or application as part of this test
 plan.
@@ -229,14 +317,19 @@ Remaining limitations:
 - The browser probe has CDP remote-IP observations unavailable.
 - Playwright `server_addr()` is the primary remote-peer evidence.
 - Process ownership has been confirmed only for the current headless shell build.
-- Cleanup is manual and not protected against state-write failure.
+- A separate watchdog protects only while Windows is running; it does not survive restart.
+- State corruption or missing state is fail-safe for deletion but may require manual recovery.
+- No Task Scheduler recovery task is created or approved.
 - Rule preview does not prove enforcement.
 
 Readiness conclusion:
 
-- The test destinations are sufficiently identified.
-- The test matrix is complete.
-- The controller and cleanup need no firewall execution for this plan.
-- The experiment should proceed only after explicit approval and with an
-  administrator who understands the temporary, narrowly scoped rule and manual
-  cleanup requirement.
+- The test destinations, revalidation procedure, test matrix, state schema,
+  watchdog design, and exact cleanup script are prepared.
+- Simulated cleanup tests cover normal completion, browser/Python failures,
+  timeout, missing/incomplete state, repeated cleanup, and stale state.
+- No firewall rule or system setting has been changed during this review.
+- The experiment is ready for explicit user approval, not execution.
+- Approval must include administrator-authorized rule creation and
+  administrator-authorized cleanup. A reboot or terminal loss can require
+  explicit post-restart cleanup, and no rule should remain unattended.

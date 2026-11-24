@@ -1,0 +1,124 @@
+{
+  "schema_version": "1-firewall-poc",
+  "started_at": "2026-11-24T12:32:48.756669+00:00",
+  "url": "https://example.com",
+  "requested_mode": "unrestricted",
+  "chromium_executable": "C:\\Users\\praba\\AppData\\Local\\ms-playwright\\chromium-1255\\chrome-win64\\chrome.exe",
+  "fresh_temporary_profile": true,
+  "quic_disabled": true,
+  "chromium_processes_during_probe": [
+    {
+      "connection": {
+        "OwningProcess": 13860,
+        "LocalAddress": "2401:4900:b36b:839c:edc2:1d3d:802e:8ca8",
+        "LocalPort": 63180,
+        "RemoteAddress": "2606:4700:91b5:72db:f2fe:4e5:ef6b:ff98",
+        "RemotePort": 443,
+        "State": 5
+      },
+      "process": {
+        "ProcessId": 13860,
+        "ParentProcessId": 14164,
+        "Name": "chrome-headless-shell.exe",
+        "ExecutablePath": "C:\\Users\\praba\\AppData\\Local\\ms-playwright\\chromium_headless_shell-1255\\chrome-headless-shell-win64\\chrome-headless-shell.exe",
+        "CommandLine": "\"C:\\Users\\praba\\AppData\\Local\\ms-playwright\\chromium_headless_shell-1255\\chrome-headless-shell-win64\\chrome-headless-shell.exe\" --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --no-sandbox --use-angle=swiftshader-webgl --use-gl=angle --mute-audio --disable-quic --headless=old --field-trial-handle=1432,i,12953708860740014727,10282013195993661049,262144 --enable-features=CDPScreenshotNewSurface,SkipListAccountsWithoutGaiaCookies --disable-features=AimEnabled,AvoidCorsURLLoaderRestartOnRedirect,AvoidUnnecessaryBeforeUnloadCheckSync,DestroyProfileOnBrowserClose,HttpsFirstBalancedModeAutoEnable,HttpsUpgrades,LensOverlay,MediaRouter,NetworkTimeServiceQuerying,OptimizationHints,PaintHolding,PreconnectToSearch,TcpPortRandomizationWin,ThirdPartyStoragePartitioning,msEdgeUpdateLaunchServicesPreferredVersion,msForceBrowserSignIn --variations-seed-version --pseudonymization-salt-handle=1436,i,11645367345889678579,5713308332690126816,4 --trace-process-track-uuid=3190708989122997041 --enable-logging=handle --log-file=2240 --mojo-platform-channel-handle=2180 /prefetch:11"
+      }
+    }
+  ],
+  "process_tree_during_probe": [
+    {
+      "ProcessId": 14164,
+      "ParentProcessId": 3320,
+      "Name": "chrome-headless-shell.exe",
+      "ExecutablePath": "C:\\Users\\praba\\AppData\\Local\\ms-playwright\\chromium_headless_shell-1255\\chrome-headless-shell-win64\\chrome-headless-shell.exe",
+      "CommandLine": "C:\\Users\\praba\\AppData\\Local\\ms-playwright\\chromium_headless_shell-1255\\chrome-headless-shell-win64\\chrome-headless-shell.exe --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-component-extensions-with-background-pages --disable-component-update --no-default-browser-check --disable-default-apps --disable-dev-shm-usage --disable-edgeupdater --disable-extensions --disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,DestroyProfileOnBrowserClose,HttpsUpgrades,HttpsFirstBalancedModeAutoEnable,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,AvoidCorsURLLoaderRestartOnRedirect,TcpPortRandomizationWin,OptimizationHints,NetworkTimeServiceQuerying,AimEnabled,PreconnectToSearch,msForceBrowserSignIn,msEdgeUpdateLaunchServicesPreferredVersion --enable-features=CDPScreenshotNewSurface,SkipListAccountsWithoutGaiaCookies --allow-pre-commit-input --disable-hang-monitor --disable-ipc-flooding-protection --disable-popup-blocking --disable-prompt-on-repost --disable-renderer-backgrounding --disable-updater-scheduler --force-color-profile=srgb --metrics-recording-only --no-first-run --password-store=basic --use-mock-keychain --no-service-autorun --disable-search-engine-choice-screen --unsafely-disable-devtools-self-xss-warnings --enable-unsafe-swiftshader --edge-skip-compat-layer-relaunch --disable-stack-profiler --disable-infobars --disable-sync --do-not-de-elevate --headless --hide-scrollbars --mute-audio --blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4 --no-sandbox --disable-quic --no-proxy-server --user-data-dir=C:\\Users\\praba\\AppData\\Local\\Temp\\ipv6-auditor-poc-i3ewcocr --remote-debugging-pipe about:blank"
+    },
+    {
+      "ProcessId": 17900,
+      "ParentProcessId": 14164,
+      "Name": "chrome-headless-shell.exe",
+      "ExecutablePath": "C:\\Users\\praba\\AppData\\Local\\ms-playwright\\chromium_headless_shell-1255\\chrome-headless-shell-win64\\chrome-headless-shell.exe",
+      "CommandLine": "\"C:\\Users\\praba\\AppData\\Local\\ms-playwright\\chromium_headless_shell-1255\\chrome-headless-shell-win64\\chrome-headless-shell.exe\" --type=gpu-process --gpu-recent-crash-count=0 --no-sandbox --disable-breakpad --headless --use-angle=swiftshader-webgl --enable-unsafe-swiftshader --gpu-preferences=WAAAAAAAAABgAACBAAAAAAAAAAAAAGAAQAAAAAAAAAAAAAAAAAAAADgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKAAAAAAAAAAoAAAAAAAAAAgAAAAAAAAADAAAAAEAAAAAAAAAAAAAAAgAAAAAAAAACAAAAAAAAAA= --field-trial-handle=1432,i,12953708860740014727,10282013195993661049,262144 --enable-features=CDPScreenshotNewSurface,SkipListAccountsWithoutGaiaCookies --disable-features=AimEnabled,AvoidCorsURLLoaderRestartOnRedirect,AvoidUnnecessaryBeforeUnloadCheckSync,DestroyProfileOnBrowserClose,HttpsFirstBalancedModeAutoEnable,HttpsUpgrades,LensOverlay,MediaRouter,NetworkTimeServiceQuerying,OptimizationHints,PaintHolding,PreconnectToSearch,TcpPortRandomizationWin,ThirdPartyStoragePartitioning,msEdgeUpdateLaunchServicesPreferredVersion,msForceBrowserSignIn --variations-seed-version --pseudonymization-salt-handle=1436,i,11645367345889678579,5713308332690126816,4 --trace-process-track-uuid=3190708988185955192 --enable-logging=handle --log-file=1140 --mojo-platform-channel-handle=1424 /prefetch:2"
+    },
+    {
+      "ProcessId": 13860,
+      "ParentProcessId": 14164,
+      "Name": "chrome-headless-shell.exe",
+      "ExecutablePath": "C:\\Users\\praba\\AppData\\Local\\ms-playwright\\chromium_headless_shell-1255\\chrome-headless-shell-win64\\chrome-headless-shell.exe",
+      "CommandLine": "\"C:\\Users\\praba\\AppData\\Local\\ms-playwright\\chromium_headless_shell-1255\\chrome-headless-shell-win64\\chrome-headless-shell.exe\" --type=utility --utility-sub-type=network.mojom.NetworkService --lang=en-US --service-sandbox-type=none --no-sandbox --use-angle=swiftshader-webgl --use-gl=angle --mute-audio --disable-quic --headless=old --field-trial-handle=1432,i,12953708860740014727,10282013195993661049,262144 --enable-features=CDPScreenshotNewSurface,SkipListAccountsWithoutGaiaCookies --disable-features=AimEnabled,AvoidCorsURLLoaderRestartOnRedirect,AvoidUnnecessaryBeforeUnloadCheckSync,DestroyProfileOnBrowserClose,HttpsFirstBalancedModeAutoEnable,HttpsUpgrades,LensOverlay,MediaRouter,NetworkTimeServiceQuerying,OptimizationHints,PaintHolding,PreconnectToSearch,TcpPortRandomizationWin,ThirdPartyStoragePartitioning,msEdgeUpdateLaunchServicesPreferredVersion,msForceBrowserSignIn --variations-seed-version --pseudonymization-salt-handle=1436,i,11645367345889678579,5713308332690126816,4 --trace-process-track-uuid=3190708989122997041 --enable-logging=handle --log-file=2240 --mojo-platform-channel-handle=2180 /prefetch:11"
+    },
+    {
+      "ProcessId": 22456,
+      "ParentProcessId": 14164,
+      "Name": "chrome-headless-shell.exe",
+      "ExecutablePath": "C:\\Users\\praba\\AppData\\Local\\ms-playwright\\chromium_headless_shell-1255\\chrome-headless-shell-win64\\chrome-headless-shell.exe",
+      "CommandLine": "\"C:\\Users\\praba\\AppData\\Local\\ms-playwright\\chromium_headless_shell-1255\\chrome-headless-shell-win64\\chrome-headless-shell.exe\" --type=renderer --headless=old --no-sandbox --disable-back-forward-cache --disable-background-timer-throttling --disable-breakpad --force-color-profile=srgb --remote-debugging-pipe --allow-pre-commit-input --blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4 --disable-gpu-compositing --video-capture-use-gpu-memory-buffer --lang=en-US --device-scale-factor=1.25 --num-raster-threads=4 --enable-main-frame-before-activation --renderer-client-id=4 --launch-time-ticks=69073311505 --field-trial-handle=1432,i,12953708860740014727,10282013195993661049,262144 --enable-features=CDPScreenshotNewSurface,SkipListAccountsWithoutGaiaCookies --disable-features=AimEnabled,AvoidCorsURLLoaderRestartOnRedirect,AvoidUnnecessaryBeforeUnloadCheckSync,DestroyProfileOnBrowserClose,HttpsFirstBalancedModeAutoEnable,HttpsUpgrades,LensOverlay,MediaRouter,NetworkTimeServiceQuerying,OptimizationHints,PaintHolding,PreconnectToSearch,TcpPortRandomizationWin,ThirdPartyStoragePartitioning,msEdgeUpdateLaunchServicesPreferredVersion,msForceBrowserSignIn --variations-seed-version --pseudonymization-salt-handle=1436,i,11645367345889678579,5713308332690126816,4 --trace-process-track-uuid=3190708990060038890 --enable-logging=handle --log-file=2576 --mojo-platform-channel-handle=2564 /prefetch:1"
+    }
+  ],
+  "navigation": {
+    "completed": true,
+    "http_status": 200,
+    "final_url": "https://example.com/"
+  },
+  "response_observations": [
+    {
+      "url": "https://example.com/",
+      "http_status": 200,
+      "playwright_server_addr": {
+        "available": true,
+        "ip": "2606:4700:91b5:72db:f2fe:4e5:ef6b:ff98",
+        "port": 443,
+        "address_family": "ipv6"
+      },
+      "playwright_server_addr_supported": true,
+      "playwright_server_addr_exception": null,
+      "cdp_remote_ip": {
+        "available": false,
+        "ip": null,
+        "address_family": "unknown"
+      },
+      "negotiated_protocol": "h2",
+      "observation_comparison": {
+        "status": "partial",
+        "playwright": "available",
+        "cdp": "unavailable"
+      }
+    },
+    {
+      "url": "https://example.com/s.js",
+      "http_status": 200,
+      "playwright_server_addr": {
+        "available": true,
+        "ip": "2606:4700:91b5:72db:f2fe:4e5:ef6b:ff98",
+        "port": 443,
+        "address_family": "ipv6"
+      },
+      "playwright_server_addr_supported": true,
+      "playwright_server_addr_exception": null,
+      "cdp_remote_ip": {
+        "available": false,
+        "ip": null,
+        "address_family": "unknown"
+      },
+      "negotiated_protocol": "h2",
+      "observation_comparison": {
+        "status": "partial",
+        "playwright": "available",
+        "cdp": "unavailable"
+      }
+    }
+  ],
+  "remote_peer_observations": [
+    {
+      "address": "2606:4700:91b5:72db:f2fe:4e5:ef6b:ff98",
+      "address_family": "ipv6",
+      "source": "playwright_server_addr"
+    }
+  ],
+  "failed_requests": [],
+  "unknown_observations": false,
+  "network_owner_executables": [
+    "C:\\Users\\praba\\AppData\\Local\\ms-playwright\\chromium_headless_shell-1255\\chrome-headless-shell-win64\\chrome-headless-shell.exe"
+  ],
+  "browser_executable_matches_network_owner": false
+}

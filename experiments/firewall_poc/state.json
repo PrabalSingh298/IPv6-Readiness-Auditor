@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "experiment_id": "fw-20261124T141327Z-ecde7b72",
+  "mode": "ipv4_only",
+  "exact_rule_name": "IPv6-Auditor-Experimental-2c198632cbb0-Block-IPv6",
+  "display_name": "IPv6-Auditor-Experimental-2c198632cbb0-Block-IPv6",
+  "group": "IPv6-Auditor-Experimental-2c198632cbb0",
+  "executable_path": "C:\\Users\\praba\\AppData\\Local\\ms-playwright\\chromium_headless_shell-1255\\chrome-headless-shell-win64\\chrome-headless-shell.exe",
+  "remote_address": "::/0",
+  "direction": "Outbound",
+  "action": "Block",
+  "protocol": "Any",
+  "creation_time": "2026-11-24T14:13:27Z",
+  "expiry_time": "2026-11-24T14:28:27Z",
+  "cleanup_status": "pending",
+  "watchdog": {
+    "process_id": null,
+    "started": false,
+    "status": "pending"
+  },
+  "final_status": "pending"
+}

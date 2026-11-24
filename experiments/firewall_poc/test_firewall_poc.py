@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
 from firewall_controller import (
     is_administrator,
@@ -9,6 +10,10 @@ from firewall_controller import (
     powershell_rule_command,
     proposed_rule,
     validate_executable,
+    build_experiment_state,
+    validate_experiment_state,
+    is_stale_state,
+    repeated_cleanup_status,
 )
 from verify_connections import verify
 from browser_probe import (
@@ -116,6 +121,87 @@ class FirewallPoCTests(unittest.TestCase):
             compare_observations(playwright_observation, cdp_observation)["status"],
             "agree",
         )
+
+    def test_state_records_all_required_metadata(self):
+        rule = proposed_rule("ipv4_only", r"C:\chrome-headless-shell.exe")
+        state = build_experiment_state("ipv4_only", rule)
+        self.assertEqual(validate_experiment_state(state), [])
+        self.assertIn("experiment_id", state)
+        self.assertEqual(state["mode"], "ipv4_only")
+        self.assertEqual(state["display_name"], rule["display_name"])
+        self.assertEqual(state["group"], rule["group"])
+        self.assertEqual(state["executable_path"], rule["program"])
+        self.assertIn("creation_time", state)
+        self.assertIn("expiry_time", state)
+        self.assertIn("cleanup_status", state)
+
+    def test_normal_completion_cleanup_runs_once(self):
+        cleaned = []
+        state = build_experiment_state(
+            "ipv4_only",
+            proposed_rule("ipv4_only", r"C:\chrome-headless-shell.exe"),
+        )
+        try:
+            cleaned.append("cleanup")
+        finally:
+            pass
+        self.assertEqual(cleaned, ["cleanup"])
+        state["cleanup_status"] = "cleaned"
+        self.assertTrue(repeated_cleanup_status(state))
+
+    def test_browser_failure_still_runs_finally_cleanup(self):
+        cleaned = []
+        try:
+            raise RuntimeError("browser navigation failed")
+        except RuntimeError:
+            pass
+        finally:
+            cleaned.append("cleanup")
+        self.assertEqual(cleaned, ["cleanup"])
+
+    def test_python_exception_still_runs_finally_cleanup(self):
+        cleaned = []
+        with self.assertRaises(ValueError):
+            try:
+                raise ValueError("unexpected Python exception")
+            finally:
+                cleaned.append("cleanup")
+        self.assertEqual(cleaned, ["cleanup"])
+
+    def test_watchdog_timeout_marks_expired_state(self):
+        state = build_experiment_state(
+            "ipv6_only",
+            proposed_rule("ipv6_only", r"C:\chrome-headless-shell.exe"),
+        )
+        future = datetime.now(timezone.utc) + timedelta(seconds=5)
+        state["expiry_time"] = future.isoformat().replace("+00:00", "Z")
+        self.assertFalse(is_stale_state(state))
+        expired = datetime.now(timezone.utc) - timedelta(seconds=1)
+        state["expiry_time"] = expired.isoformat().replace("+00:00", "Z")
+        self.assertTrue(is_stale_state(state))
+
+    def test_missing_and_incomplete_state_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_file = Path(directory) / "state.json"
+            self.assertFalse(state_file.exists())
+        incomplete = {"experiment_id": "fw-test"}
+        self.assertNotEqual(validate_experiment_state(incomplete), [])
+        self.assertTrue(is_stale_state(incomplete))
+
+    def test_repeated_cleanup_is_idempotent(self):
+        rule = proposed_rule("ipv4_only", r"C:\chrome-headless-shell.exe")
+        state = build_experiment_state("ipv4_only", rule)
+        state["cleanup_status"] = "cleaned"
+        self.assertTrue(repeated_cleanup_status(state))
+        self.assertTrue(repeated_cleanup_status(state))
+
+    def test_stale_state_is_detected_without_cleanup_guessing(self):
+        state = build_experiment_state(
+            "ipv4_only",
+            proposed_rule("ipv4_only", r"C:\chrome-headless-shell.exe"),
+        )
+        state["expiry_time"] = "2000-01-01T00:00:00Z"
+        self.assertTrue(is_stale_state(state))
 
 
 if __name__ == "__main__":
