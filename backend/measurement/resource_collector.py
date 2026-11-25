@@ -15,6 +15,8 @@ from backend.measurement.network_mode import (
     chromium_launch_args,
     UnsupportedNetworkModeError,
 )
+from backend.measurement.dependency_graph import build_dependency_graph
+from backend.measurement.failure_classifier import classify_resource
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -63,6 +65,7 @@ def collect_resources(
     started_at = datetime.now(timezone.utc).isoformat()
     measurement_start = time.perf_counter()
     resources: dict[str, dict] = {}
+    cdp_initiators: dict[str, list[dict]] = {}
     observed_address_families: set[str] = set()
     navigation: dict = {
         "requested_url": target_url,
@@ -93,6 +96,16 @@ def collect_resources(
                     "duration_ms": None,
                 },
                 "failure": None,
+                "dependency": {
+                    "initiator_url": None,
+                    "initiator_type": None,
+                    "initiator_line_number": None,
+                    "initiator_column_number": None,
+                    "parent_resource_url": None,
+                    "depth": None,
+                    "relationship_status": "unavailable",
+                    "evidence": None,
+                },
                 "raw_evidence": {
                     "is_navigation_request": request.is_navigation_request(),
                     "frame_url": request.frame.url if request.frame else None,
@@ -146,6 +159,37 @@ def collect_resources(
             cdp_session = page.context.new_cdp_session(page)
             cdp_session.send("Network.enable")
 
+            def on_request_will_be_sent(event: dict) -> None:
+                request_url = event.get("request", {}).get("url")
+                if not request_url:
+                    return
+
+                initiator = event.get("initiator") or {}
+                stack = initiator.get("stack") or {}
+                call_frames = stack.get("callFrames") or []
+                frame = call_frames[0] if call_frames else {}
+                initiator_url = (
+                    initiator.get("url")
+                    or frame.get("url")
+                    or None
+                )
+                initiator_record = {
+                    "initiator_url": initiator_url,
+                    "initiator_type": initiator.get("type"),
+                    "initiator_line_number": (
+                        initiator.get("lineNumber")
+                        if initiator.get("lineNumber") is not None
+                        else frame.get("lineNumber")
+                    ),
+                    "initiator_column_number": (
+                        initiator.get("columnNumber")
+                        if initiator.get("columnNumber") is not None
+                        else frame.get("columnNumber")
+                    ),
+                    "evidence": "chromium_cdp_initiator",
+                }
+                cdp_initiators.setdefault(request_url, []).append(initiator_record)
+
             def on_response_extra_info(event: dict) -> None:
                 remote_address = event.get("remoteIPAddress")
                 if not remote_address:
@@ -158,6 +202,7 @@ def collect_resources(
                     "ipv4" if address.version == 4 else "ipv6"
                 )
 
+            cdp_session.on("Network.requestWillBeSent", on_request_will_be_sent)
             cdp_session.on("Network.responseReceivedExtraInfo", on_response_extra_info)
 
             try:
@@ -197,7 +242,13 @@ def collect_resources(
     for resource in resources.values():
         resource.pop("_started_perf", None)
         resource.pop("_response_evidence", None)
+        initiators = cdp_initiators.get(resource["url"], [])
+        if initiators:
+            resource["dependency"].update(initiators[0])
+        resource["failure_classification"] = classify_resource(resource)
         cleaned_resources.append(resource)
+
+    dependency_graph = build_dependency_graph(cleaned_resources)
 
     if observed_address_families:
         network_mode["observed_connection_address_families"] = sorted(
@@ -231,6 +282,7 @@ def collect_resources(
         "nat64_status": network_mode["nat64_status"],
         "navigation": navigation,
         "resources": cleaned_resources,
+        "dependency_graph": dependency_graph,
         "summary": {
             "total_resources": len(cleaned_resources),
             "successful_or_http_success": sum(

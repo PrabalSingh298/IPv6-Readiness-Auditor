@@ -9,7 +9,7 @@ A browser-based tool for measuring whether a website and its browser-loaded reso
 - [x] Phase 1: Workspace inspection and setup
 - [x] Phase 2: Browser resource collection
 - [ ] Phase 3: IPv4/IPv6 measurement
-- [ ] Phase 4: Failure classification and dependency graph
+- [x] Phase 4: Failure classification and dependency graph
 - [ ] Phase 5: Reporting and campaign support
 - [ ] Phase 6: Web dashboard
 - [ ] Phase 7: Final validation
@@ -22,12 +22,13 @@ A browser-based tool for measuring whether a website and its browser-loaded reso
 - This Windows environment has IPv4 access and link-local IPv6 addresses, but no global IPv6 default route was observed.
 - NAT64 status is unknown.
 - The controlled dual-stack and IPv4-only test site is not claimed to be safe or usable until address-family enforcement is verified.
-- Failure-stage classification is not implemented yet.
+- TLS failure classification is evidence-based and remains inconclusive when the browser does not expose a specific TLS error.
 - No phase of the application has been validated against a live network yet.
 - A successful browser launch does not prove IPv4 or IPv6 network connectivity.
 - Phase 2 uses normal Chromium networking and does not enforce IPv4 or IPv6.
 - Browser resource timing is recorded only from available Playwright events.
 - HTTP success, for 200-399, is separate from browser network success and is not a final readiness result.
+- Dependency relationships are recorded only when Chromium CDP provides an initiator that matches a captured resource; otherwise parent and depth remain unknown.
 
 ## Phase 1 setup
 
@@ -80,6 +81,43 @@ The collector:
 - Saves a JSON report to `data/`.
 
 Phase 2 does not determine whether a failure was DNS, TCP, TLS, timeout, or another browser/network issue. It preserves raw browser evidence for later phases.
+
+## Phase 4 dependency graph
+
+The collector now records CDP initiator URL, initiator type, source line/column
+when available, matched parent URL, and dependency depth. It adds a
+`dependency_graph` object with resource nodes, evidence-backed edges, and root
+URLs to each JSON report.
+
+Run the local controlled-fixture test and the existing Phase 2 website checks:
+
+```powershell
+.\.venv\Scripts\python.exe tests\test_dependency_graph.py
+.\.venv\Scripts\python.exe tests\test_resource_collection.py
+```
+
+The controlled fixture is in `controlled_site\dependency_test\`. Its test server
+is started only by the test and URL validation is bypassed only within that test
+process; production URL validation remains unchanged.
+
+## Phase 5 resource failure classification
+
+Each resource now includes `failure_classification` with a category, short
+reason, and the HTTP status/browser error evidence used. Categories are
+`success`, `dns_failure`, `connection_failure`, `tls_failure`, `http_failure`,
+and `inconclusive`. Generic browser errors and ambiguous navigation timeouts
+remain inconclusive. The original `failure`, HTTP status, raw evidence, and
+dependency graph are preserved.
+
+Run the Phase 5 controlled and classification tests:
+
+```powershell
+.\.venv\Scripts\python.exe tests\test_failure_classification.py
+```
+
+The test uses browser-supplied error strings for classification boundaries and
+a local controlled HTTP server for success, 404, and 500 responses. No
+IPv4/IPv6 cause is inferred from generic network errors.
 
 ## Phase 3 network mode setup
 
