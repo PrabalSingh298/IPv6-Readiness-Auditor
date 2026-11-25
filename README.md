@@ -8,7 +8,7 @@ A browser-based tool for measuring whether a website and its browser-loaded reso
 
 - [x] Phase 1: Workspace inspection and setup
 - [x] Phase 2: Browser resource collection
-- [ ] Phase 3: IPv4/IPv6 measurement
+- [x] Phase 3: IPv4/IPv6 measurement
 - [x] Phase 4: Resource dependency graph
 - [x] Phase 5: Resource failure classification
 - [ ] Phase 6: Measurement campaign
@@ -17,12 +17,7 @@ A browser-based tool for measuring whether a website and its browser-loaded reso
 
 ### Known limitations
 
-- IPv4/IPv6 browser traffic enforcement is not implemented yet.
-- IPv4-only Chromium measurement is candidate-only; `--disable-ipv6` is not claimed as independently verified.
-- IPv6-only Chromium measurement is unsupported until a safe process-level mechanism and independent peer verification exist.
-- This Windows environment has IPv4 access and link-local IPv6 addresses, but no global IPv6 default route was observed.
-- NAT64 status is unknown.
-- The controlled dual-stack and IPv4-only test site is not claimed to be safe or usable until address-family enforcement is verified.
+- IP-family isolation applies to proxied Chromium TCP web traffic. DNS transport, other host traffic, and NAT64 translation are outside the measurement scope.
 - TLS failure classification is evidence-based and remains inconclusive when the browser does not expose a specific TLS error.
 - The dashboard flow was validated with an unrestricted live `https://example.com` measurement; this does not verify address-family enforcement.
 - A successful browser launch does not prove IPv4 or IPv6 network connectivity.
@@ -83,6 +78,37 @@ The collector:
 
 Phase 2 does not determine whether a failure was DNS, TCP, TLS, timeout, or another browser/network issue. It preserves raw browser evidence for later phases.
 
+## Standalone IP-family proxy
+
+Run the Playwright example from the project root using the existing Python environment and installed Chromium:
+
+```powershell
+.\.venv\Scripts\python.exe -m examples.playwright_ip_family ipv4_only https://example.com
+```
+
+`IPFamilyProxy` accepts `ipv4_only`, `ipv6_only`, or `dual_stack`. Restricted modes use SOCKS5 CONNECT on a temporary `127.0.0.1` port. Chromium supports SOCKS5 with proxy-side hostname resolution, and the proxy relays HTTP and TLS bytes over TCP. Chromium validates the destination's certificate as usual. Dual-stack returns empty Chromium launch options and uses the browser's normal networking.
+
+```python
+from playwright.sync_api import sync_playwright
+from backend.measurement.ip_family_proxy import IPFamilyProxy
+
+with IPFamilyProxy("ipv6_only") as proxy, sync_playwright() as playwright:
+    browser = playwright.chromium.launch(**proxy.playwright_launch_options())
+    try:
+        page = browser.new_page()
+        page.goto("https://example.com", timeout=15000)
+    finally:
+        browser.close()
+
+attempts = proxy.connection_attempts
+```
+
+The context manages the listener and active tunnels. Synchronous callers can also use `start()`, `is_running`, and `stop()`. One instance is intended for one browser run at a time. `connection_attempts` is a bounded snapshot of DNS outcomes and TCP attempts. A successful record includes the upstream socket's peer address and family. DNS failure, unavailable family, and connection timeout or failure have distinct reason codes. Several browser resources can share one connection, and a TCP success says only that the socket connected.
+
+This isolates TCP web resource connections in the configured Chromium instance. Its launch options remove Chromium's implicit loopback and link-local bypass, disable QUIC, and restrict non-proxied WebRTC UDP. System DNS can use either IP family and an in-flight OS lookup may finish after proxy shutdown. Other UDP traffic, WebRTC paths, other apps, and traffic outside the browser proxy remain outside this scope. VPNs can route or encapsulate traffic, and DNS64/NAT64 can translate an IPv6 connection to an IPv4 origin. The listener is unauthenticated and reachable by local processes while running. On Windows each proxy accepts up to 250 simultaneous clients within the socket selector's limit.
+
+Run focused tests with `python -m unittest discover -s tests -p test_ip_family_proxy.py -v`. The Chromium test uses OpenSSL on `PATH` or the `OPENSSL` environment variable to generate a temporary local test certificate.
+
 ## Phase 4 dependency graph
 
 The collector now records CDP initiator URL, initiator type, source line/column
@@ -114,10 +140,9 @@ through the local API, polls its status, and displays the actual collector
 report. JSON and CSV downloads are available after completion. The API also
 provides a resource-detail endpoint and capabilities listing.
 
-IPv6-only mode is shown but disabled because the existing backend marks it
-unsupported. IPv4-only is labelled unverified. These labels do not imply
-address-family enforcement. Jobs and reports are held in memory and are lost
-when the server stops.
+Select **Unrestricted**, **IPv4-only**, or **IPv6-only** before running the measurement.
+The results show the selected mode and observed peers. Restricted reports also
+show the proxy's connection attempts. Completed reports are saved in `data/`.
 
 Run the controlled dependency and classification regressions with:
 
@@ -152,66 +177,14 @@ IPv4/IPv6 cause is inferred from generic network errors.
 
 ## Phase 3 network mode setup
 
-### New Phase 3 file
-
-- `backend/measurement/network_mode.py`
-  - Validates the requested network mode.
-  - Checks for Windows IPv6 addresses and a global IPv6 default route.
-  - Builds an explicit network verification record.
-  - Rejects IPv6-only mode instead of silently allowing IPv4 fallback.
-  - Never changes firewall, routing, adapter, or global network settings.
-
-- `backend/measurement/resource_collector.py`
-  - Reuses Phase 2 browser resource collection.
-  - Accepts `unrestricted`, `ipv4_only`, or `ipv6_only`.
-  - For IPv4-only, launches Chromium with `--disable-ipv6` as a candidate mechanism.
-  - Records CDP-observed remote address families when Chromium exposes them.
-  - Does not claim IPv4-only readiness unless peer address evidence is verified.
-
-### Run unrestricted measurement
-
 ```powershell
 .\.venv\Scripts\python.exe -m backend.measurement.resource_collector "https://example.com" 30000 unrestricted
-```
-
-### Run the IPv4-only candidate measurement
-
-```powershell
 .\.venv\Scripts\python.exe -m backend.measurement.resource_collector "https://example.com" 30000 ipv4_only
-```
-
-This mode is candidate-only. The report remains `candidate_unverified` unless Chromium independently exposes only IPv4 remote peers.
-
-### Attempt IPv6-only measurement
-
-```powershell
 .\.venv\Scripts\python.exe -m backend.measurement.resource_collector "https://example.com" 30000 ipv6_only
 ```
 
-IPv6-only mode is currently blocked and exits before Chromium starts.
+Restricted measurements start a loopback SOCKS5 proxy before Chromium and close it after the browser exits. No administrator privileges or system-wide networking changes are required. Unrestricted measurements launch Chromium directly and use its response peer evidence when available.
 
-### Run Phase 3 tests
+Reports and JSON exports include `network_mode.connection_attempts` and `network_mode.observed_remote_addresses`. Restricted peers come from connected upstream sockets. A TCP connection can carry multiple resources. The resource table and CSV retain browser-level classification, while the proxy attempts distinguish unavailable families, DNS failures, TCP failures, and timeouts. A completed report can describe failed navigation or unavailable resources. If no upstream peer connected, enforcement verification is recorded as `no_upstream_connections_observed`.
 
-```powershell
-.\.venv\Scripts\python.exe tests/test_phase3_network_modes.py
-```
-
-The test output distinguishes:
-
-- `PASSED`: supported and verified behavior
-- `INCONCLUSIVE`: Chromium ran, but independent address-family verification was unavailable
-- `NOT SUPPORTED`: no safe IPv6-only mechanism is available
-- `SKIPPED`: a controlled test was not run because enforcement was not verified
-
-## Phase 3 Windows findings
-
-Read-only checks found:
-
-- An active IPv4 address: `192.168.137.42`
-- A link-local IPv6 address: `fe80::56b2:242a:ccbe:a86`
-- No IPv6 global address was found.
-- No `::/0` IPv6 default route was found.
-- Example.com has AAAA DNS records, but those records do not prove IPv6 internet connectivity.
-- NAT64 status remains unknown.
-
-Chromium/Playwright provides browser launch control and can expose some peer information through CDP, but it does not provide a standard process-level IPv6-only enforcement option on Windows. The IPv4 candidate flag was not independently verified because no remote peer address was observed in this environment.
+Run `python -m unittest discover -s tests -p test_phase3_network_modes.py -v` for dashboard, collector, and cleanup verification against the existing controlled site served over both loopback families.

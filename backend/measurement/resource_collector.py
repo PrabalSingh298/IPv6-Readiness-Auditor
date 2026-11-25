@@ -1,22 +1,19 @@
 import json
 import ipaddress
-import socket
 import sys
 import time
 import uuid
+from contextlib import ExitStack, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-from playwright.sync_api import Browser, Error as PlaywrightError, Request, Response, sync_playwright
+from playwright.sync_api import Error as PlaywrightError, Request, Response, sync_playwright
 
-from backend.measurement.network_mode import (
-    build_network_mode_report,
-    chromium_launch_args,
-    UnsupportedNetworkModeError,
-)
 from backend.measurement.dependency_graph import build_dependency_graph
 from backend.measurement.failure_classifier import classify_resource
+from backend.measurement.ip_family_proxy import IPFamilyProxy
+from backend.measurement.network_mode import build_network_mode_report, validate_mode
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -59,14 +56,14 @@ def collect_resources(
     measurement_mode: str = "unrestricted",
 ) -> dict:
     target_url = validate_url(url)
-    launch_args = chromium_launch_args(measurement_mode)
-    network_mode = build_network_mode_report(measurement_mode)
+    mode = validate_mode(measurement_mode)
+    proxy = IPFamilyProxy(mode) if mode != "unrestricted" else None
     measurement_id = str(uuid.uuid4())
     started_at = datetime.now(timezone.utc).isoformat()
     measurement_start = time.perf_counter()
     resources: dict[str, dict] = {}
     cdp_initiators: dict[str, list[dict]] = {}
-    observed_address_families: set[str] = set()
+    direct_peers: set[str] = set()
     navigation: dict = {
         "requested_url": target_url,
         "completed": False,
@@ -145,11 +142,11 @@ def collect_resources(
             "browser_error_text": request.failure,
         }
 
-    browser: Browser | None = None
-
     try:
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=headless, args=launch_args)
+        with proxy or nullcontext(), sync_playwright() as playwright, ExitStack() as browser_lifecycle:
+            launch_options = proxy.playwright_launch_options() if proxy else {}
+            browser = playwright.chromium.launch(headless=headless, **launch_options)
+            browser_lifecycle.callback(browser.close)
             page = browser.new_page()
 
             page.on("request", on_request)
@@ -190,20 +187,22 @@ def collect_resources(
                 }
                 cdp_initiators.setdefault(request_url, []).append(initiator_record)
 
-            def on_response_extra_info(event: dict) -> None:
-                remote_address = event.get("remoteIPAddress")
-                if not remote_address:
+            def on_cdp_response(event: dict) -> None:
+                response = event.get("response", {})
+                remote_address = response.get("remoteIPAddress")
+                if not remote_address or response.get("fromDiskCache") or response.get("fromServiceWorker"):
                     return
                 try:
-                    address = ipaddress.ip_address(remote_address)
+                    address = ipaddress.ip_address(remote_address.strip("[]"))
                 except ValueError:
                     return
-                observed_address_families.add(
-                    "ipv4" if address.version == 4 else "ipv6"
-                )
+                if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+                    address = address.ipv4_mapped
+                direct_peers.add(str(address))
 
             cdp_session.on("Network.requestWillBeSent", on_request_will_be_sent)
-            cdp_session.on("Network.responseReceivedExtraInfo", on_response_extra_info)
+            if proxy is None:
+                cdp_session.on("Network.responseReceived", on_cdp_response)
 
             try:
                 response = page.goto(target_url, wait_until="domcontentloaded", timeout=timeout_ms)
@@ -224,19 +223,10 @@ def collect_resources(
             page.wait_for_timeout(1000)
             navigation["duration_ms"] = _elapsed_milliseconds(measurement_start)
             page.close()
-            browser.close()
-            browser = None
-    except PlaywrightError as error:
-        navigation["completed"] = False
-        navigation["error"] = str(error)
-        navigation["error_type"] = type(error).__name__
     except Exception as error:
         navigation["completed"] = False
         navigation["error"] = str(error)
         navigation["error_type"] = type(error).__name__
-    finally:
-        if browser is not None:
-            browser.close()
 
     cleaned_resources = []
     for resource in resources.values():
@@ -250,20 +240,7 @@ def collect_resources(
 
     dependency_graph = build_dependency_graph(cleaned_resources)
 
-    if observed_address_families:
-        network_mode["observed_connection_address_families"] = sorted(
-            observed_address_families
-        )
-        if measurement_mode == "ipv4_only":
-            network_mode["enforcement_verification_status"] = (
-                "verified_ipv4_only"
-                if observed_address_families == {"ipv4"}
-                else "failed_or_mixed_address_families"
-            )
-            network_mode["verification_evidence"]["remote_peer_verification"] = (
-                "observed_remote_addresses"
-            )
-
+    network_mode = build_network_mode_report(mode, proxy.connection_attempts if proxy else (), direct_peers)
     network_mode["measurement_completed_at"] = datetime.now(timezone.utc).isoformat()
 
     report = {
@@ -278,7 +255,7 @@ def collect_resources(
         "network_enforcement_mechanism": network_mode["network_enforcement_mechanism"],
         "enforcement_verification_status": network_mode["enforcement_verification_status"],
         "verification_evidence": network_mode["verification_evidence"],
-        "observed_connection_address_families": sorted(observed_address_families),
+        "observed_connection_address_families": network_mode["observed_connection_address_families"],
         "nat64_status": network_mode["nat64_status"],
         "navigation": navigation,
         "resources": cleaned_resources,
@@ -333,11 +310,8 @@ def main() -> int:
             timeout_ms=timeout_ms,
             measurement_mode=measurement_mode,
         )
-    except UnsupportedNetworkModeError as error:
-        print(f"Unsupported measurement mode: {error}")
-        return 3
     except ValueError as error:
-        print(f"Invalid URL: {error}")
+        print(error)
         return 2
     except Exception as error:
         print(f"Collector error: {type(error).__name__}: {error}")

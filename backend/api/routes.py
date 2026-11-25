@@ -1,34 +1,102 @@
 import csv
 import io
+import json
+import logging
+import os
+import tempfile
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import Literal
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
-from backend.measurement.network_mode import (
-    UnsupportedNetworkModeError,
-    chromium_launch_args,
+from backend.measurement.network_mode import MeasurementMode
+from backend.measurement.resource_collector import (
+    DATA_DIRECTORY,
+    collect_resources,
+    validate_url,
 )
-from backend.measurement.resource_collector import collect_resources, validate_url
 
 
 router = APIRouter(prefix="/api")
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="measurement")
 _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
+_logger = logging.getLogger(__name__)
 
 
 class MeasurementRequest(BaseModel):
     url: str
-    mode: Literal["unrestricted", "ipv4_only", "ipv6_only"] = "unrestricted"
+    mode: MeasurementMode = "unrestricted"
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def load_saved_reports() -> int:
+    DATA_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    loaded_jobs = {}
+
+    for report_path in DATA_DIRECTORY.glob("phase3_*.json"):
+        try:
+            with report_path.open(encoding="utf-8") as report_file:
+                report = json.load(report_file)
+            modified_at = datetime.fromtimestamp(
+                report_path.stat().st_mtime, timezone.utc
+            ).isoformat()
+        except (OSError, json.JSONDecodeError) as error:
+            _logger.warning("Could not load saved report %s: %s", report_path, error)
+            continue
+
+        if not isinstance(report, dict) or not isinstance(report.get("resources"), list):
+            continue
+
+        job_id = report.get("dashboard_job_id") or report.get("measurement_id")
+        target_url = report.get("target_url")
+        if not isinstance(job_id, str) or not isinstance(target_url, str):
+            continue
+
+        started_at = report.get("started_at") or modified_at
+        report.setdefault("output_file", str(report_path))
+        loaded_jobs[job_id] = {
+            "id": job_id,
+            "url": target_url,
+            "mode": report.get("measurement_mode", "unrestricted"),
+            "status": "completed",
+            "created_at": started_at,
+            "started_at": started_at,
+            "completed_at": modified_at,
+            "error": None,
+            "report": report,
+        }
+
+    with _jobs_lock:
+        _jobs.update(loaded_jobs)
+    return len(loaded_jobs)
+
+
+def _persist_report(job_id: str, report: dict) -> dict:
+    report_path = Path(report["output_file"])
+    if report_path.resolve().parent != DATA_DIRECTORY.resolve():
+        raise ValueError("Collector report output must be inside the project data directory")
+
+    persisted_report = {**report, "dashboard_job_id": job_id}
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=report_path.parent,
+        prefix=f"{report_path.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as report_file:
+        temporary_path = Path(report_file.name)
+        json.dump(persisted_report, report_file, indent=2)
+    os.replace(temporary_path, report_path)
+    return persisted_report
 
 
 def _run_measurement(job_id: str, url: str, mode: str) -> None:
@@ -38,7 +106,10 @@ def _run_measurement(job_id: str, url: str, mode: str) -> None:
         job["started_at"] = _utc_now()
 
     try:
-        report = collect_resources(url, measurement_mode=mode)
+        report = _persist_report(
+            job_id,
+            collect_resources(url, measurement_mode=mode),
+        )
     except Exception as error:
         with _jobs_lock:
             job = _jobs[job_id]
@@ -70,19 +141,19 @@ def get_capabilities() -> dict:
                 "id": "unrestricted",
                 "label": "Unrestricted",
                 "available": True,
-                "description": "Chromium uses normal Windows networking.",
+                "description": "Chromium uses its normal networking.",
             },
             {
                 "id": "ipv4_only",
-                "label": "IPv4-only (unverified)",
+                "label": "IPv4-only",
                 "available": True,
-                "description": "Candidate mode only; enforcement is not independently verified.",
+                "description": "The proxy opens upstream TCP web connections over IPv4 only.",
             },
             {
                 "id": "ipv6_only",
                 "label": "IPv6-only",
-                "available": False,
-                "description": "Unsupported: safe, independently verified enforcement is unavailable.",
+                "available": True,
+                "description": "The proxy opens upstream TCP web connections over IPv6 only.",
             },
         ]
     }
@@ -92,9 +163,6 @@ def get_capabilities() -> dict:
 def start_measurement(request: MeasurementRequest) -> dict:
     try:
         url = validate_url(request.url)
-        chromium_launch_args(request.mode)
-    except UnsupportedNetworkModeError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 

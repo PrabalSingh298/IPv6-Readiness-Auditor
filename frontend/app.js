@@ -13,6 +13,15 @@ const graphSvg = document.querySelector("#dependency-graph");
 let activeReport = null;
 let activeJob = null;
 
+const modeLabels = { unrestricted: "Unrestricted", ipv4_only: "IPv4-only", ipv6_only: "IPv6-only" };
+const connectionOutcomes = {
+  address_family_unavailable: "Requested IP family unavailable",
+  dns_failure: "DNS resolution failed",
+  dns_timeout: "DNS resolution timed out",
+  connection_failure: "TCP connection failed",
+  connection_timeout: "TCP connection timed out",
+};
+
 function setStatus(state, message, time = "") {
   statusBanner.className = `status-banner status-${state}`;
   statusMessage.textContent = message;
@@ -106,7 +115,7 @@ function renderReport(report) {
   ).length;
 
   document.querySelector("#result-title").textContent = report.target_url || "Measurement results";
-  document.querySelector("#result-subtitle").textContent = `${report.measurement_mode || "unrestricted"} mode · ${new Date(report.started_at).toLocaleString()}`;
+  document.querySelector("#result-subtitle").textContent = `${modeLabels[report.measurement_mode] || modeLabels.unrestricted} · ${new Date(report.started_at).toLocaleString()}`;
   document.querySelector("#metric-total").textContent = summary.total_resources ?? resources.length;
   document.querySelector("#metric-success").textContent = successCount;
   document.querySelector("#metric-failed").textContent = failedCount;
@@ -120,7 +129,40 @@ function renderReport(report) {
   populateTypeFilter(resources);
   renderResourceTable();
   renderDependencyGraph(report.dependency_graph || {}, resources);
+  renderNetworkEvidence(report.network_mode);
   renderLimitations(report);
+}
+
+function renderNetworkEvidence(network) {
+  const panel = document.querySelector("#network-evidence");
+  panel.hidden = !Array.isArray(network?.observed_remote_addresses);
+  if (panel.hidden) return;
+
+  const restricted = network.network_enforcement_mechanism === "socks5_ip_family_proxy";
+  const peers = network.observed_remote_addresses;
+  const families = network.observed_connection_address_families.map((family) => family.replace("ipv", "IPv"));
+  const source = restricted ? "Proxy upstream" : "Chromium response";
+  document.querySelector("#network-summary").textContent = families.length
+    ? `${source} connections observed over ${families.join(" and ")}.`
+    : `No ${source.toLowerCase()} peers observed for this measurement.`;
+
+  const peerList = document.querySelector("#network-peers");
+  peerList.hidden = peers.length === 0;
+  peerList.textContent = peers.map(({ ip, family }) => `${ip} (${family.replace("ipv", "IPv")})`).join(", ");
+
+  const attempts = network.connection_attempts || [];
+  const connectionDetails = document.querySelector("#connection-evidence");
+  connectionDetails.hidden = attempts.length === 0;
+  connectionDetails.open = false;
+  document.querySelector("#connection-attempts").replaceChildren(...attempts.map((attempt) => {
+    const row = document.createElement("tr");
+    const peer = attempt.remote_ip ? `${attempt.remote_ip} (${attempt.upstream_family.replace("ipv", "IPv")})` : "—";
+    const outcome = attempt.success ? "Connected" : connectionOutcomes[attempt.failure_reason] || "Failed";
+    for (const value of [attempt.hostname, attempt.port, attempt.attempted_ip || "—", peer, outcome]) {
+      row.insertCell().textContent = value;
+    }
+    return row;
+  }));
 }
 
 function populateTypeFilter(resources) {
@@ -298,7 +340,11 @@ function renderUnknownResources(nodes, resources) {
 
 function renderLimitations(report) {
   const limitations = [];
-  if (report.measurement_mode === "ipv4_only") limitations.push("IPv4-only enforcement is a candidate and has not been independently verified.");
+  if (report.network_enforcement_mechanism === "socks5_ip_family_proxy") {
+    limitations.push("IP-family isolation applies to proxied Chromium TCP web traffic. System DNS and other host traffic are outside this scope.");
+  } else if (report.network_enforcement_mechanism === "chromium_disable_ipv6_flag" && report.enforcement_verification_status !== "verified_ipv4_only") {
+    limitations.push("This saved report used the earlier IPv4 candidate mode.");
+  }
   if (report.nat64_status === "unknown") limitations.push("NAT64/464XLAT status is unknown; observed IPv6 may involve translation.");
   if ((report.resources || []).some((resource) => resource.failure_classification?.category === "inconclusive")) limitations.push("Some resource failures could not be assigned a specific cause.");
   if (!report.navigation?.completed) limitations.push("Navigation did not complete successfully; results may be incomplete.");

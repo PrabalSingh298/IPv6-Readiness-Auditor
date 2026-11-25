@@ -1,109 +1,185 @@
+from contextlib import ExitStack
+from http.server import ThreadingHTTPServer
 from pathlib import Path
+import socket
 import sys
+from tempfile import TemporaryDirectory
+from threading import Thread
+import time
+import unittest
+from unittest.mock import patch
+from urllib.parse import urljoin
+
+import uvicorn
+from playwright.sync_api import expect, sync_playwright
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from backend.measurement.network_mode import (
-    UnsupportedNetworkModeError,
-    build_network_mode_report,
-)
-from backend.measurement.resource_collector import collect_resources
+from backend.api import routes
+from backend.main import app
+from backend.measurement import resource_collector
+from backend.measurement.ip_family_proxy import IPFamilyProxy
+from test_dependency_graph import FIXTURE_DIRECTORY, FixtureRequestHandler
+from test_ip_family_proxy import IPv6Server, fixed_dns
 
 
-def test_unrestricted_mode() -> bool:
-    report = collect_resources(
-        "https://example.com",
-        timeout_ms=30000,
-        measurement_mode="unrestricted",
-    )
-    required_fields = [
-        "requested_measurement_mode",
-        "network_enforcement_mechanism",
-        "enforcement_verification_status",
-        "verification_evidence",
-        "observed_connection_address_families",
-        "nat64_status",
-    ]
-    passed = (
-        report["measurement_mode"] == "unrestricted"
-        and report["navigation"]["completed"]
-        and all(field in report for field in required_fields)
-    )
-    print(
-        "UNRESTRICTED:",
-        "PASSED" if passed else "FAILED",
-        "| navigation:",
-        report["navigation"]["completed"],
-        "| verification:",
-        report["enforcement_verification_status"],
-    )
-    print("JSON:", report["output_file"])
-    return passed
+class Phase3Fixture(FixtureRequestHandler):
+    def do_GET(self):
+        if self.path != "/phase3.html":
+            return super().do_GET()
 
-
-def test_ipv4_candidate_mode() -> bool:
-    report = collect_resources(
-        "https://example.com",
-        timeout_ms=30000,
-        measurement_mode="ipv4_only",
-    )
-    status = report["enforcement_verification_status"]
-    passed_precondition = status in (
-        "candidate_unverified",
-        "verified_ipv4_only",
-        "failed_or_mixed_address_families",
-    )
-    result = "PASSED" if status == "verified_ipv4_only" else "INCONCLUSIVE"
-    print(
-        "IPV4-ONLY:",
-        result,
-        "| Chromium launch completed:",
-        report["navigation"]["completed"] is not None,
-        "| verification:",
-        status,
-        "| observed:",
-        report["observed_connection_address_families"],
-    )
-    print("JSON:", report["output_file"])
-    return passed_precondition
-
-
-def test_ipv6_supported_mode() -> bool:
-    try:
-        collect_resources(
-            "https://example.com",
-            timeout_ms=30000,
-            measurement_mode="ipv6_only",
+        # Reuse the existing site and point two additional images at single-family listeners.
+        port = self.server.server_port
+        images = (
+            f'<img src="http://127.0.0.1:{port}/logo.svg?ipv4" alt="IPv4 image">'
+            f'<img src="http://[::1]:{port}/logo.svg?ipv6" alt="IPv6 image">'
         )
-    except UnsupportedNetworkModeError:
-        report = build_network_mode_report("ipv6_only")
-        print(
-            "IPV6-ONLY:",
-            "NOT SUPPORTED",
-            "| verification:",
-            report["enforcement_verification_status"],
-            "| NAT64:",
-            report["nat64_status"],
-        )
-        return True
-
-    print("IPV6-ONLY: FAILED | browser launch unexpectedly occurred")
-    return False
+        body = (FIXTURE_DIRECTORY / "index.html").read_text(encoding="utf-8")
+        document = body.replace("</body>", images + "</body>").encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", str(len(document)))
+        self.end_headers()
+        self.wfile.write(document)
 
 
-def main() -> int:
-    print("Phase 3 network-mode test results")
-    results = [
-        test_unrestricted_mode(),
-        test_ipv4_candidate_mode(),
-        test_ipv6_supported_mode(),
-    ]
-    print("CONTROLLED IPV4/IPv6 ACCESS TEST: SKIPPED")
-    print("Reason: no safely verifiable Windows address-family enforcement mechanism")
+class Phase3Tests(unittest.TestCase):
+    def test_dashboard_and_controlled_site_in_all_modes(self):
+        with ExitStack() as cleanup:
+            directory = Path(cleanup.enter_context(TemporaryDirectory()))
+            cleanup.enter_context(patch.object(resource_collector, "DATA_DIRECTORY", directory))
+            cleanup.enter_context(patch.object(routes, "DATA_DIRECTORY", directory))
+            cleanup.enter_context(patch.object(routes, "_jobs", {}))
+            proxies = []
 
-    return 0 if all(results) else 1
+            def track_proxy(mode):
+                proxy = IPFamilyProxy(mode)
+                proxies.append(proxy)
+                return proxy
+
+            cleanup.enter_context(patch.object(resource_collector, "IPFamilyProxy", side_effect=track_proxy))
+
+            ipv4 = cleanup.enter_context(ThreadingHTTPServer(("127.0.0.1", 0), Phase3Fixture))
+            port = ipv4.server_port
+            ipv6 = cleanup.enter_context(IPv6Server(("::1", port), Phase3Fixture))
+            for origin in (ipv4, ipv6):
+                thread = Thread(target=origin.serve_forever, daemon=True)
+                thread.start()
+                cleanup.callback(thread.join, 5)
+                cleanup.callback(origin.shutdown)
+
+            listener = cleanup.enter_context(socket.socket())
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            dashboard_url = f"http://127.0.0.1:{listener.getsockname()[1]}"
+            server = uvicorn.Server(uvicorn.Config(app, log_level="error"))
+            thread = Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+            thread.start()
+            cleanup.callback(thread.join, 5)
+            cleanup.callback(setattr, server, "should_exit", True)
+            deadline = time.monotonic() + 10
+            while not server.started and thread.is_alive() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertTrue(server.started)
+
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch()
+                with ExitStack() as browser_cleanup:
+                    browser_cleanup.callback(browser.close)
+                    self.check_dashboard(browser.new_page(), dashboard_url, port, proxies)
+
+    def check_dashboard(self, page, dashboard_url, port, proxies):
+        page.goto(dashboard_url)
+        target = f"http://localhost:{port}/phase3.html"
+        rejected = page.request.post(f"{dashboard_url}/api/measurements", data={"url": target})
+        self.assertEqual(rejected.status, 422)
+        capabilities = page.request.get(f"{dashboard_url}/api/capabilities").json()["modes"]
+        self.assertEqual({item["id"] for item in capabilities if item["available"]},
+                         {"unrestricted", "ipv4_only", "ipv6_only"})
+
+        with (
+            patch.object(resource_collector, "validate_url", side_effect=lambda url: url),
+            patch.object(routes, "validate_url", side_effect=lambda url: url),
+            fixed_dns({"localhost": ["127.0.0.1", "::1"]}),
+        ):
+            for mode, label, family in (
+                ("unrestricted", "Unrestricted", None),
+                ("ipv4_only", "IPv4-only", "ipv4"),
+                ("ipv6_only", "IPv6-only", "ipv6"),
+            ):
+                with self.subTest(mode=mode):
+                    report = self.run_dashboard_measurement(page, dashboard_url, target, mode)
+                    expect(page.locator("#result-subtitle")).to_contain_text(label)
+                    self.assertEqual(report["measurement_mode"], mode)
+                    self.assertTrue(report["navigation"]["completed"])
+                    self.assertTrue(report["dependency_graph"]["edges"])
+                    assets = {item["url"].split("?")[-1]: item for item in report["resources"]
+                              if "/logo.svg?" in item["url"]}
+                    self.assertEqual(set(assets), {"ipv4", "ipv6"})
+                    for asset_family, resource in assets.items():
+                        self.assertEqual(resource["success"], family in (None, asset_family))
+                        if not resource["success"]:
+                            self.assertEqual(resource["failure_classification"]["category"], "connection_failure")
+                    self.assertTrue(page.request.get(urljoin(
+                        dashboard_url, page.locator("#download-csv").get_attribute("href"),
+                    )).ok)
+
+                    network = report["network_mode"]
+                    if family is None:
+                        self.assertEqual(proxies, [])
+                        self.assertEqual(network["connection_attempts"], [])
+                        self.assertEqual(set(network["observed_connection_address_families"]), {"ipv4", "ipv6"})
+                        continue
+                    self.assertEqual(report["enforcement_verification_status"], f"verified_{mode}")
+                    self.assertEqual(network["observed_remote_addresses"],
+                                     [{"ip": "127.0.0.1" if family == "ipv4" else "::1", "family": family}])
+                    self.assertIn("address_family_unavailable",
+                                  {item["failure_reason"] for item in network["connection_attempts"]})
+                    expect(page.locator("#network-peers")).to_contain_text(f"({family.replace('ipv', 'IPv')})")
+                    page.locator("#connection-evidence summary").click()
+                    expect(page.locator("#connection-attempts")).to_be_visible()
+                    expect(page.locator("#connection-attempts")).to_contain_text("Requested IP family unavailable")
+                    self.assertFalse(proxies[-1].is_running)
+
+            report = self.run_dashboard_measurement(
+                page, dashboard_url, f"http://127.0.0.1:{port}/index.html", "ipv6_only",
+            )
+            self.assertFalse(report["navigation"]["completed"])
+            self.assertEqual(report["enforcement_verification_status"], "no_upstream_connections_observed")
+            self.assertEqual(report["network_mode"]["observed_remote_addresses"], [])
+            self.assertFalse(proxies[-1].is_running)
+
+    def run_dashboard_measurement(self, page, dashboard_url, target, mode):
+        page.locator("#url-input").fill(target)
+        page.locator("#mode-select").select_option(mode)
+        page.locator("#run-button").click()
+        expect(page.locator("#status-message")).to_contain_text("Measurement completed", timeout=20000)
+        href = page.locator("#download-json").get_attribute("href")
+        response = page.request.get(urljoin(dashboard_url, href))
+        self.assertTrue(response.ok)
+        return response.json()
+
+    def test_browser_error_closes_browser_before_proxy(self):
+        proxy = IPFamilyProxy("ipv4_only")
+
+        def check_running():
+            self.assertTrue(proxy.is_running)
+
+        with (
+            TemporaryDirectory() as directory,
+            patch.object(resource_collector, "DATA_DIRECTORY", Path(directory)),
+            patch.object(resource_collector, "IPFamilyProxy", return_value=proxy),
+            patch.object(resource_collector, "sync_playwright") as playwright,
+        ):
+            browser = playwright.return_value.__enter__.return_value.chromium.launch.return_value
+            browser.new_page.side_effect = RuntimeError("browser execution failed")
+            browser.close.side_effect = check_running
+            report = resource_collector.collect_resources("https://example.test", measurement_mode="ipv4_only")
+        browser.close.assert_called_once()
+        self.assertFalse(proxy.is_running)
+        self.assertEqual(report["navigation"]["error"], "browser execution failed")
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    unittest.main(verbosity=2)
