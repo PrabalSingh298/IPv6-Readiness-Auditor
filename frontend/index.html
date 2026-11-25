@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#102a43">
+  <title>IPv6 Readiness Auditor</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="IPv6 Readiness Auditor home">
+      <span class="brand-mark" aria-hidden="true">6</span>
+      <span>
+        <strong>IPv6 Readiness Auditor</strong>
+        <small>Browser resource measurement</small>
+      </span>
+    </a>
+    <div class="topbar-note"><span class="live-dot"></span> Local measurement workspace</div>
+  </header>
+
+  <main class="page-shell">
+    <section class="intro">
+      <div>
+        <p class="eyebrow">NETWORK MEASUREMENT</p>
+        <h1>Website readiness overview</h1>
+        <p class="intro-copy">Measure browser-loaded resources, review failures, and inspect how page assets depend on one another.</p>
+      </div>
+      <div class="privacy-note">
+        <span class="privacy-icon" aria-hidden="true">↗</span>
+        <span><strong>Runs locally</strong><small>Results are measured by your local Chromium browser.</small></span>
+      </div>
+    </section>
+
+    <section class="panel configuration-panel" aria-labelledby="config-heading">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">CONFIGURATION</p>
+          <h2 id="config-heading">Start a measurement</h2>
+        </div>
+        <span class="step-badge">01</span>
+      </div>
+      <form id="measurement-form">
+        <label class="field url-field">
+          <span>Website URL</span>
+          <input id="url-input" name="url" type="url" placeholder="https://example.com" autocomplete="url" required>
+        </label>
+        <label class="field mode-field">
+          <span>Measurement mode</span>
+          <select id="mode-select" name="mode" aria-describedby="mode-help">
+            <option value="unrestricted">Unrestricted</option>
+            <option value="ipv4_only">IPv4-only — enforcement unverified</option>
+            <option value="ipv6_only" disabled>IPv6-only — currently unsupported</option>
+          </select>
+        </label>
+        <button id="run-button" class="primary-button" type="submit">
+          <span class="button-icon" aria-hidden="true">▶</span>
+          <span>Run measurement</span>
+        </button>
+      </form>
+      <p id="mode-help" class="form-hint">IPv4-only is a candidate mode, not a verified network restriction. IPv6-only is unavailable on this system.</p>
+      <div id="measurement-status" class="status-banner status-idle" role="status" aria-live="polite">
+        <span class="status-indicator"></span>
+        <span id="status-message">Ready when you are. Enter a public website to begin.</span>
+        <span id="status-time" class="status-time"></span>
+      </div>
+    </section>
+
+    <section id="results-section" class="results-section hidden" aria-live="polite">
+      <div class="results-heading">
+        <div>
+          <p class="eyebrow">LATEST MEASUREMENT</p>
+          <h2 id="result-title">Measurement results</h2>
+          <p id="result-subtitle" class="muted"></p>
+        </div>
+        <div class="export-actions">
+          <a id="download-json" class="secondary-button disabled-link" aria-disabled="true">↓ JSON</a>
+          <a id="download-csv" class="secondary-button disabled-link" aria-disabled="true">↓ CSV</a>
+        </div>
+      </div>
+
+      <div class="metric-grid">
+        <article class="metric-card metric-total">
+          <span class="metric-label">Resources observed</span>
+          <strong id="metric-total">—</strong>
+          <span class="metric-footnote">Browser requests collected</span>
+        </article>
+        <article class="metric-card metric-success">
+          <span class="metric-label">Successful</span>
+          <strong id="metric-success">—</strong>
+          <span class="metric-footnote">Successful HTTP responses</span>
+        </article>
+        <article class="metric-card metric-failed">
+          <span class="metric-label">Failed</span>
+          <strong id="metric-failed">—</strong>
+          <span class="metric-footnote">Known unsuccessful resources</span>
+        </article>
+        <article class="metric-card metric-unknown">
+          <span class="metric-label">Inconclusive</span>
+          <strong id="metric-inconclusive">—</strong>
+          <span class="metric-footnote">Cause could not be established</span>
+        </article>
+      </div>
+
+      <section class="panel classification-panel">
+        <div class="panel-heading compact-heading">
+          <div>
+            <p class="eyebrow">FAILURE BREAKDOWN</p>
+            <h2>Classification evidence</h2>
+          </div>
+          <span class="muted small-copy">Conservative, evidence-based categories</span>
+        </div>
+        <div class="classification-grid">
+          <div class="classification-item"><span class="class-icon dns">D</span><span>DNS</span><strong id="count-dns">0</strong></div>
+          <div class="classification-item"><span class="class-icon connection">C</span><span>Connection</span><strong id="count-connection">0</strong></div>
+          <div class="classification-item"><span class="class-icon tls">T</span><span>TLS</span><strong id="count-tls">0</strong></div>
+          <div class="classification-item"><span class="class-icon http">H</span><span>HTTP</span><strong id="count-http">0</strong></div>
+          <div class="classification-item"><span class="class-icon inconclusive">?</span><span>Inconclusive</span><strong id="count-inconclusive">0</strong></div>
+        </div>
+      </section>
+
+      <section class="panel table-panel">
+        <div class="panel-heading table-heading">
+          <div>
+            <p class="eyebrow">RESOURCE INSPECTOR</p>
+            <h2>Observed resources</h2>
+          </div>
+          <span id="resource-count-label" class="count-pill">0 resources</span>
+        </div>
+        <div class="table-toolbar">
+          <label class="search-control">
+            <span class="search-icon" aria-hidden="true">⌕</span>
+            <input id="resource-search" type="search" placeholder="Search URL or hostname" aria-label="Search resources">
+          </label>
+          <label class="filter-control">
+            <span class="visually-hidden">Filter by result</span>
+            <select id="result-filter" aria-label="Filter by result">
+              <option value="all">All results</option>
+              <option value="failed">Failed resources</option>
+              <option value="success">Successful resources</option>
+              <option value="inconclusive">Inconclusive resources</option>
+              <option value="dns_failure">DNS failures</option>
+              <option value="connection_failure">Connection failures</option>
+              <option value="tls_failure">TLS failures</option>
+              <option value="http_failure">HTTP failures</option>
+            </select>
+          </label>
+          <label class="filter-control">
+            <span class="visually-hidden">Filter by resource type</span>
+            <select id="type-filter" aria-label="Filter by resource type">
+              <option value="all">All resource types</option>
+            </select>
+          </label>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Resource URL</th>
+                <th scope="col">Type</th>
+                <th scope="col">HTTP</th>
+                <th scope="col">Result</th>
+                <th scope="col">Failure classification</th>
+              </tr>
+            </thead>
+            <tbody id="resource-table-body">
+              <tr><td class="empty-cell" colspan="5">Run a measurement to view browser resources.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p id="table-empty-state" class="table-empty hidden">No resources match these filters.</p>
+      </section>
+
+      <section class="panel graph-panel">
+        <div class="panel-heading table-heading">
+          <div>
+            <p class="eyebrow">RESOURCE RELATIONSHIPS</p>
+            <h2>Dependency graph</h2>
+          </div>
+          <span id="graph-count-label" class="count-pill">0 relationships</span>
+        </div>
+        <p class="graph-description">Edges are drawn only when Chromium provided initiator evidence matching a captured resource.</p>
+        <div id="graph-empty-state" class="graph-empty">
+          <span class="graph-empty-icon" aria-hidden="true">◇</span>
+          <strong>No verified relationships to display</strong>
+          <span>Unknown initiators are not shown as invented connections.</span>
+        </div>
+        <div id="graph-scroll" class="graph-scroll hidden">
+          <svg id="dependency-graph" role="img" aria-label="Resource dependency graph"></svg>
+        </div>
+        <div id="unknown-resources" class="unknown-resources hidden"></div>
+      </section>
+
+      <section id="limitations-panel" class="limitations-panel hidden">
+        <div class="limitation-icon" aria-hidden="true">i</div>
+        <div>
+          <strong>Measurement limitations</strong>
+          <ul id="limitations-list"></ul>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>IPv6 Readiness Auditor</span>
+    <span>Measurements are observations, not a guarantee of network-wide readiness.</span>
+  </footer>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

@@ -9,10 +9,11 @@ A browser-based tool for measuring whether a website and its browser-loaded reso
 - [x] Phase 1: Workspace inspection and setup
 - [x] Phase 2: Browser resource collection
 - [ ] Phase 3: IPv4/IPv6 measurement
-- [x] Phase 4: Failure classification and dependency graph
-- [ ] Phase 5: Reporting and campaign support
-- [ ] Phase 6: Web dashboard
-- [ ] Phase 7: Final validation
+- [x] Phase 4: Resource dependency graph
+- [x] Phase 5: Resource failure classification
+- [ ] Phase 6: Measurement campaign
+- [x] Phase 7: Web dashboard
+- [ ] Phase 8: Final validation
 
 ### Known limitations
 
@@ -23,7 +24,7 @@ A browser-based tool for measuring whether a website and its browser-loaded reso
 - NAT64 status is unknown.
 - The controlled dual-stack and IPv4-only test site is not claimed to be safe or usable until address-family enforcement is verified.
 - TLS failure classification is evidence-based and remains inconclusive when the browser does not expose a specific TLS error.
-- No phase of the application has been validated against a live network yet.
+- The dashboard flow was validated with an unrestricted live `https://example.com` measurement; this does not verify address-family enforcement.
 - A successful browser launch does not prove IPv4 or IPv6 network connectivity.
 - Phase 2 uses normal Chromium networking and does not enforce IPv4 or IPv6.
 - Browser resource timing is recorded only from available Playwright events.
@@ -99,6 +100,36 @@ Run the local controlled-fixture test and the existing Phase 2 website checks:
 The controlled fixture is in `controlled_site\dependency_test\`. Its test server
 is started only by the test and URL validation is bypassed only within that test
 process; production URL validation remains unchanged.
+
+## Dashboard
+
+Start the FastAPI application from the project root:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+```
+
+Open `http://127.0.0.1:8000` in a browser. The dashboard starts a measurement
+through the local API, polls its status, and displays the actual collector
+report. JSON and CSV downloads are available after completion. The API also
+provides a resource-detail endpoint and capabilities listing.
+
+IPv6-only mode is shown but disabled because the existing backend marks it
+unsupported. IPv4-only is labelled unverified. These labels do not imply
+address-family enforcement. Jobs and reports are held in memory and are lost
+when the server stops.
+
+Run the controlled dependency and classification regressions with:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py" -v
+```
+
+Run the Phase 2 live-site checks separately with:
+
+```powershell
+.\.venv\Scripts\python.exe tests\test_resource_collection.py
+```
 
 ## Phase 5 resource failure classification
 
