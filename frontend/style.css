@@ -123,6 +123,17 @@ h2 { margin: 0; color: #193550; font-size: 17px; letter-spacing: -0.02em; }
 .metric-footnote { font-size: 10px; }
 
 .classification-panel { margin-bottom: 16px; padding: 18px 21px; }
+.readiness-metrics { display: flex; flex-wrap: wrap; gap: 12px 32px; margin: 0; }
+.readiness-metrics dt { color: #526b80; font-size: 12px; }
+.readiness-metrics dd { margin: 4px 0 0; color: #183751; font-size: 24px; font-weight: 700; }
+.cap-ipv4_only { --cap-color: #ab3f46; --cap-fill: #fbe9eb; }
+.cap-dual_stack { --cap-color: #2c7953; --cap-fill: #e5f5eb; }
+.cap-ipv6_only { --cap-color: #2f65a1; --cap-fill: #e7f0fc; }
+.cap-unknown { --cap-color: #657480; --cap-fill: #eef1f4; }
+.readiness-distribution:not([hidden]) { display: flex; height: 10px; overflow: hidden; border-radius: 5px; }
+.readiness-distribution span { flex-basis: 0; background: var(--cap-color); }
+.capability-legend:not([hidden]) { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 8px 0 12px; padding: 0; list-style: none; font-size: 12px; }
+.capability-legend li::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 6px; border-radius: 50%; background: var(--cap-color); }
 .compact-heading { margin-bottom: 15px; }
 .small-copy { font-size: 10px; }
 .classification-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
@@ -152,6 +163,9 @@ td { max-width: 360px; padding: 11px; border-bottom: 1px solid #edf1f4; color: #
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: #fbfdfd; }
 .url-cell { min-width: 260px; color: #31536e; }
+.ip-details { margin: 6px 0; overflow-wrap: anywhere; }
+.ip-details dt { font-weight: 650; }
+.ip-details dd { margin: 0 0 4px; }
 .url-main { display: block; overflow: hidden; color: #294e6d; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .url-host { display: block; margin-top: 2px; overflow: hidden; color: #99a5af; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .type-tag { display: inline-block; padding: 3px 7px; border-radius: 6px; color: #547086; background: #f0f4f7; font-size: 9px; }
@@ -174,8 +188,10 @@ tbody tr:hover { background: #fbfdfd; }
 .graph-scroll { overflow: auto; border: 1px solid #edf1f4; border-radius: 10px; background: #fbfdfe; }
 #dependency-graph { display: block; min-width: 640px; }
 .graph-edge { fill: none; stroke: #b7cbd3; stroke-width: 1.5; }
-.graph-node { fill: #fff; stroke: #cddde3; stroke-width: 1.2; }
-.graph-node.root { fill: #e8f7f5; stroke: #4ca9a5; }
+.graph-node { fill: var(--cap-fill); stroke: var(--cap-color); stroke-width: 1.2; }
+.graph-node.root { stroke-width: 2; }
+#dependency-graph [role="button"] { cursor: pointer; }
+#dependency-graph [role="button"]:focus-visible .graph-node { stroke: #31536e; stroke-width: 2; }
 .graph-node.unknown { fill: #f7f8fa; stroke: #c8d0d7; stroke-dasharray: 4 3; }
 .graph-node-label { fill: #29465f; font-size: 11px; font-weight: 650; }
 .graph-node-type { fill: #8293a1; font-size: 9px; }

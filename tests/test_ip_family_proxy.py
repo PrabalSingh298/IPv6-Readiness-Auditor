@@ -108,8 +108,8 @@ def fixed_dns(records):
             ip, port, type=socket.SOCK_STREAM, flags=socket.AI_NUMERICHOST,
         )]
 
-    with patch("socket.getaddrinfo", side_effect=lookup):
-        yield
+    with patch("socket.getaddrinfo", side_effect=lookup) as resolver:
+        yield resolver
 
 
 class ProxyTests(unittest.TestCase):

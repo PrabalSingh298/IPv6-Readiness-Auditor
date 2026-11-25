@@ -59,6 +59,9 @@ def build_dependency_graph(resources: list[dict]) -> dict:
                 "resource_type": resource.get("resource_type"),
                 "depth": resource["dependency"]["depth"],
                 "relationship_status": resource["dependency"]["relationship_status"],
+                "hostname": resource.get("hostname"),
+                "ip_evidence": resource.get("ip_evidence"),
+                "dns_capability": resource.get("dns_capability", "unknown"),
             }
             for resource in resources
         ],

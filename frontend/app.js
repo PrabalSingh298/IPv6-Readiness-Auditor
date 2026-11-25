@@ -14,6 +14,7 @@ let activeReport = null;
 let activeJob = null;
 
 const modeLabels = { unrestricted: "Unrestricted", ipv4_only: "IPv4-only", ipv6_only: "IPv6-only" };
+const capabilityLabels = { ipv4_only: "IPv4-only", dual_stack: "Dual-stack", ipv6_only: "IPv6-only", unknown: "Unknown" };
 const connectionOutcomes = {
   address_family_unavailable: "Requested IP family unavailable",
   dns_failure: "DNS resolution failed",
@@ -127,10 +128,55 @@ function renderReport(report) {
   document.querySelector("#count-inconclusive").textContent = inconclusiveCount;
 
   populateTypeFilter(resources);
+  renderReadiness(report.readiness);
   renderResourceTable();
   renderDependencyGraph(report.dependency_graph || {}, resources);
   renderNetworkEvidence(report.network_mode);
   renderLimitations(report);
+}
+
+function renderCapabilityLegend(list, counts = null) {
+  list.replaceChildren(...Object.entries(capabilityLabels).map(([capability, label]) => {
+    const item = document.createElement("li");
+    item.className = `cap-${capability}`;
+    item.textContent = counts ? `${label} (${counts[capability]})` : label;
+    return item;
+  }));
+}
+
+function renderReadiness(readiness) {
+  const distribution = document.querySelector("#readiness-distribution");
+  const legend = document.querySelector("#readiness-counts");
+  const total = readiness?.total_baseline_resources;
+  const score = (value) => value == null ? "—" : `${value}%`;
+  document.querySelector("#dns-readiness").textContent = score(readiness?.dns_ipv6_readiness_percent);
+  document.querySelector("#http-readiness").textContent = score(readiness?.http_ipv6_readiness_percent);
+  document.querySelector("#baseline-total").textContent = total ?? "—";
+  const outcomes = readiness?.http_outcome_counts;
+  let status = "Run an unrestricted measurement for this URL to establish the baseline.";
+  if (total === 0) {
+    status = "The unrestricted run captured no HTTP(S) resources.";
+  } else if (total && outcomes) {
+    status = `${outcomes.retrieved} retrieved over IPv6 · ${outcomes.failed} failed · ${outcomes.undiscovered} undiscovered · ${outcomes.unverified} unverified`;
+  } else if (total) {
+    status = "Run IPv6-only for this URL to measure HTTP IPv6 readiness.";
+  }
+  document.querySelector("#readiness-status").textContent = status;
+
+  legend.hidden = total == null;
+  distribution.hidden = !total;
+  distribution.replaceChildren();
+  if (total == null) return;
+  const counts = readiness.dns_counts;
+  renderCapabilityLegend(legend, counts);
+  if (!total) return;
+  for (const [capability, count] of Object.entries(counts)) {
+    if (!count) continue;
+    const segment = document.createElement("span");
+    segment.className = `cap-${capability}`;
+    segment.style.flexGrow = count;
+    distribution.append(segment);
+  }
 }
 
 function renderNetworkEvidence(network) {
@@ -215,6 +261,13 @@ function renderResourceTable() {
     host.className = "url-host";
     host.textContent = resource.hostname || "Hostname unavailable";
     urlCell.append(url, host);
+    if (resource.ip_evidence) {
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = "IP details";
+      details.append(summary, createIPDetails(resource));
+      urlCell.append(details);
+    }
     row.append(urlCell);
 
     const typeCell = document.createElement("td");
@@ -249,6 +302,37 @@ function renderResourceTable() {
   }
 }
 
+function createIPDetails(resource) {
+  const details = document.createElement("dl");
+  details.className = "ip-details";
+  const { resolved_addresses: resolved, connected_peer: peer, response_peers: peers, proxy_origin: proxy } = resource.ip_evidence || {};
+  const formatPeer = ({ ip, family }) => `${ip} (${family.replace("ipv", "IPv")})`;
+  const add = (label, value) => {
+    const term = document.createElement("dt");
+    const description = document.createElement("dd");
+    term.textContent = label;
+    description.textContent = value;
+    details.append(term, description);
+  };
+  add("Hostname", resource.hostname || "Unavailable");
+  add("DNS capability", capabilityLabels[resource.dns_capability] || capabilityLabels.unknown);
+  if (resolved) {
+    const sources = { ip_literal: "URL literal", system_getaddrinfo: "System DNS", proxy_getaddrinfo: "Proxy DNS" };
+    const missing = resolved.failure_reason ? connectionOutcomes[resolved.failure_reason] || "Lookup incomplete" : "None returned";
+    add("Available IPv4", resolved.ipv4.join(", ") || missing);
+    add("Available IPv6", resolved.ipv6.join(", ") || missing);
+    add("Address source", `${sources[resolved.source]} · hostname`);
+  }
+  add("Resource peer", peer ? `${formatPeer(peer)} · Chromium response` : "Unavailable");
+  if (peers?.length > 1) add("Peers across observed responses", peers.map(formatPeer).join(", "));
+  if (proxy) {
+    add("Proxy evidence", `${proxy.hostname} · port ${proxy.port} · upstream sockets`);
+    add("Attempted IPs", proxy.attempted_addresses.join(", ") || "None recorded");
+    add("Connected peers for host and port", proxy.connected_peers.map(formatPeer).join(", ") || "None observed");
+  }
+  return details;
+}
+
 function svgElement(name, attributes = {}) {
   const element = document.createElementNS("http://www.w3.org/2000/svg", name);
   for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, value);
@@ -260,10 +344,14 @@ function renderDependencyGraph(graph, resources) {
   const edges = graph.edges || [];
   const knownNodes = nodes.filter((node) => node.depth !== null && node.depth !== undefined);
   const unknownNodes = nodes.filter((node) => node.depth === null || node.depth === undefined);
+  renderCapabilityLegend(document.querySelector("#graph-capability-legend"));
   document.querySelector("#graph-count-label").textContent = `${edges.length} relationships`;
   document.querySelector("#graph-empty-state").classList.toggle("hidden", edges.length > 0);
   document.querySelector("#graph-scroll").classList.toggle("hidden", edges.length === 0);
   graphSvg.replaceChildren();
+  const nodeDetails = document.querySelector("#graph-node-details");
+  nodeDetails.hidden = true;
+  nodeDetails.replaceChildren();
   renderUnknownResources(unknownNodes, resources);
   if (edges.length === 0) return;
 
@@ -305,22 +393,36 @@ function renderDependencyGraph(graph, resources) {
     const point = positions.get(node.url);
     if (!point) continue;
     const resource = resourceByUrl.get(node.url);
-    const group = svgElement("g");
+    const capability = resource?.dns_capability || node.dns_capability || "unknown";
+    const group = svgElement("g", { role: "button", tabindex: "0", "aria-label": `IP details for ${node.url}` });
     const isRoot = (graph.root_urls || []).includes(node.url);
     group.append(svgElement("rect", {
       x: point.x, y: point.y - 24, width: 190, height: 48, rx: 8,
-      class: `graph-node${isRoot ? " root" : ""}`,
+      class: `graph-node cap-${capability}${isRoot ? " root" : ""}`,
     }));
     const label = svgElement("text", { x: point.x + 11, y: point.y - 3, class: "graph-node-label" });
     const displayUrl = node.url.replace(/^https?:\/\//, "");
     label.textContent = displayUrl.length > 25 ? `${displayUrl.slice(0, 22)}…` : displayUrl;
     const title = svgElement("title");
-    title.textContent = node.url;
+    title.textContent = `${node.url} · ${capabilityLabels[capability] || capabilityLabels.unknown}`;
     label.append(title);
     group.append(label);
     const type = svgElement("text", { x: point.x + 11, y: point.y + 13, class: "graph-node-type" });
     type.textContent = resource?.resource_type || node.resource_type || "resource";
     group.append(type);
+    const showDetails = () => {
+      const heading = document.createElement("strong");
+      heading.textContent = node.url;
+      nodeDetails.replaceChildren(heading, createIPDetails(resource || node));
+      nodeDetails.hidden = false;
+    };
+    group.addEventListener("click", showDetails);
+    group.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        showDetails();
+      }
+    });
     graphSvg.append(group);
   }
 }

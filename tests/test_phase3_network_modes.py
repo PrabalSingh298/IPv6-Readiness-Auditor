@@ -1,3 +1,4 @@
+import csv
 from contextlib import ExitStack
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -34,6 +35,7 @@ class Phase3Fixture(FixtureRequestHandler):
         images = (
             f'<img src="http://127.0.0.1:{port}/logo.svg?ipv4" alt="IPv4 image">'
             f'<img src="http://[::1]:{port}/logo.svg?ipv6" alt="IPv6 image">'
+            '<img src="http://unresolved.invalid/logo.svg" alt="Unresolved image">'
         )
         body = (FIXTURE_DIRECTORY / "index.html").read_text(encoding="utf-8")
         document = body.replace("</body>", images + "</body>").encode()
@@ -101,7 +103,7 @@ class Phase3Tests(unittest.TestCase):
         with (
             patch.object(resource_collector, "validate_url", side_effect=lambda url: url),
             patch.object(routes, "validate_url", side_effect=lambda url: url),
-            fixed_dns({"localhost": ["127.0.0.1", "::1"]}),
+            fixed_dns({"localhost": ["127.0.0.1", "::1"], "unresolved.invalid": None}) as resolver,
         ):
             for mode, label, family in (
                 ("unrestricted", "Unrestricted", None),
@@ -109,7 +111,9 @@ class Phase3Tests(unittest.TestCase):
                 ("ipv6_only", "IPv6-only", "ipv6"),
             ):
                 with self.subTest(mode=mode):
+                    resolver.reset_mock()
                     report = self.run_dashboard_measurement(page, dashboard_url, target, mode)
+                    self.assertEqual(sum(call.args[0] == "localhost" for call in resolver.call_args_list), 1)
                     expect(page.locator("#result-subtitle")).to_contain_text(label)
                     self.assertEqual(report["measurement_mode"], mode)
                     self.assertTrue(report["navigation"]["completed"])
@@ -121,9 +125,12 @@ class Phase3Tests(unittest.TestCase):
                         self.assertEqual(resource["success"], family in (None, asset_family))
                         if not resource["success"]:
                             self.assertEqual(resource["failure_classification"]["category"], "connection_failure")
-                    self.assertTrue(page.request.get(urljoin(
+                    download = page.request.get(urljoin(
                         dashboard_url, page.locator("#download-csv").get_attribute("href"),
-                    )).ok)
+                    ))
+                    self.assertTrue(download.ok)
+                    self.check_ip_evidence(page, report, target, family, assets, download.text())
+                    self.check_readiness(page, report, target, mode, download.text())
 
                     network = report["network_mode"]
                     if family is None:
@@ -149,6 +156,79 @@ class Phase3Tests(unittest.TestCase):
             self.assertEqual(report["enforcement_verification_status"], "no_upstream_connections_observed")
             self.assertEqual(report["network_mode"]["observed_remote_addresses"], [])
             self.assertFalse(proxies[-1].is_running)
+
+    def check_ip_evidence(self, page, report, target, family, assets, csv_contents):
+        index, resource = next((index, item) for index, item in enumerate(report["resources"]) if item["url"] == target)
+        evidence = resource["ip_evidence"]
+        resolved = evidence["resolved_addresses"]
+        self.assertEqual(resolved["ipv4"], ["127.0.0.1"])
+        self.assertEqual(resolved["ipv6"], ["::1"])
+        self.assertEqual(resolved["source"], "proxy_getaddrinfo" if family else "system_getaddrinfo")
+        node = next(item for item in report["dependency_graph"]["nodes"] if item["url"] == target)
+        self.assertEqual(node["ip_evidence"], evidence)
+        csv_row = next(item for item in csv.DictReader(csv_contents.splitlines()) if item["url"] == target)
+        self.assertEqual(csv_row["available_ipv6"], "::1")
+        if family:
+            self.assertIsNone(evidence["connected_peer"])
+            origin = evidence["proxy_origin"]
+            self.assertEqual(origin["scope"], "hostname_port")
+            expected_ip = "127.0.0.1" if family == "ipv4" else "::1"
+            self.assertEqual(origin["connected_peers"], [{"ip": expected_ip, "family": family}])
+            self.assertEqual(origin["attempted_addresses"], [expected_ip])
+            self.assertEqual(csv_row["remote_ip"], "")
+            self.assertEqual(csv_row["proxy_evidence_scope"], "hostname_port")
+            opposite = assets["ipv6" if family == "ipv4" else "ipv4"]["ip_evidence"]
+            self.assertEqual(opposite["proxy_origin"]["connected_peers"], [])
+        else:
+            self.assertEqual(evidence["connected_peer"]["scope"], "resource_response")
+            self.assertEqual(csv_row["remote_ip"], evidence["connected_peer"]["ip"])
+            self.assertEqual(assets["ipv6"]["ip_evidence"]["connected_peer"]["ip"], "::1")
+
+        row = page.locator(f'tr[data-resource-index="{index}"]')
+        row.get_by_text("IP details", exact=True).click()
+        expect(row.locator(".ip-details")).to_contain_text("Available IPv6")
+        page.get_by_role("button", name=f"IP details for {target}", exact=True).press("Enter")
+        expect(page.locator("#graph-node-details")).to_be_visible()
+        expect(page.locator("#graph-node-details")).to_contain_text(
+            "Connected peers for host and port" if family else "Chromium response",
+        )
+
+    def check_readiness(self, page, report, target, mode, csv_contents):
+        readiness = report["readiness"]
+        counts = readiness["dns_counts"]
+        self.assertEqual((counts["ipv4_only"], counts["ipv6_only"], counts["unknown"]), (1, 1, 1))
+        total = readiness["total_baseline_resources"]
+        self.assertEqual(total, sum(counts.values()))
+        expected_dns = round(100 * (total - 2) / total, 2)
+        self.assertEqual(readiness["dns_ipv6_readiness_percent"], expected_dns)
+        expect(page.locator("#dns-readiness")).to_have_text(f"{expected_dns:g}%")
+        self.assertEqual(page.locator("#readiness-distribution span").count(), 4)
+        expect(page.locator("#graph-capability-legend")).to_contain_text("Dual-stack")
+
+        resources = {item["url"]: item for item in report["resources"]}
+        for capability, url in (
+            ("ipv4_only", next(url for url in resources if url.endswith("?ipv4"))),
+            ("dual_stack", target),
+            ("ipv6_only", next(url for url in resources if url.endswith("?ipv6"))),
+            ("unknown", "http://unresolved.invalid/logo.svg"),
+        ):
+            self.assertEqual(resources[url]["dns_capability"], capability)
+            node = page.get_by_role("button", name=f"IP details for {url}", exact=True)
+            expect(node.locator("rect")).to_have_class(f"graph-node cap-{capability}" + (" root" if url == target else ""))
+            self.assertNotEqual(node.locator("rect").evaluate("node => getComputedStyle(node).fill"), "rgb(0, 0, 0)")
+
+        first = next(csv.DictReader(csv_contents.splitlines()))
+        self.assertEqual(float(first["dns_ipv6_readiness_percent"]), expected_dns)
+        if mode == "ipv6_only":
+            http = readiness["http_resource_outcomes"]
+            self.assertEqual(http[target], "retrieved")
+            self.assertEqual(next(value for url, value in http.items() if url.endswith("?ipv4")), "failed")
+            self.assertEqual(readiness["http_ipv6_readiness_percent"], round(100 * (total - 2) / total, 2))
+            self.assertEqual(float(first["http_ipv6_readiness_percent"]), readiness["http_ipv6_readiness_percent"])
+        else:
+            self.assertIsNone(readiness["http_ipv6_readiness_percent"])
+            self.assertEqual(first["http_ipv6_readiness_percent"], "")
+            expect(page.locator("#http-readiness")).to_have_text("—")
 
     def run_dashboard_measurement(self, page, dashboard_url, target, mode):
         page.locator("#url-input").fill(target)

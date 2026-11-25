@@ -31,6 +31,13 @@ class ConnectionAttempt:
     detail: str | None = None
 
 
+@dataclass(frozen=True)
+class HostnameResolution:
+    addresses: tuple[tuple[int, tuple], ...] = ()
+    failure_reason: str | None = None
+    detail: str | None = None
+
+
 class IPFamilyProxy:
     """Use from a synchronous caller, with one lifecycle per browser run."""
 
@@ -54,6 +61,8 @@ class IPFamilyProxy:
         self._idle_timeout = idle_timeout
         self._attempts: deque[ConnectionAttempt] = deque(maxlen=history_limit)
         self._attempt_lock = Lock()
+        self._lookups: dict[str, asyncio.Task[HostnameResolution]] = {}
+        self._resolutions: dict[str, HostnameResolution] = {}
         self._thread: Thread | None = None
         self._server: _ServerHandle | None = None
 
@@ -72,11 +81,18 @@ class IPFamilyProxy:
         with self._attempt_lock:
             return tuple(self._attempts)
 
+    @property
+    def hostname_resolutions(self) -> dict[str, HostnameResolution]:
+        with self._attempt_lock:
+            return dict(self._resolutions)
+
     def start(self) -> "IPFamilyProxy":
         if self._family is None or self.is_running:
             return self
         with self._attempt_lock:
             self._attempts.clear()
+            self._resolutions.clear()
+        self._lookups.clear()
         ready: Future[_ServerHandle] = Future()
         self._thread = Thread(target=self._run, args=(ready,), name="ip-family-proxy", daemon=True)
         self._thread.start()
@@ -160,6 +176,9 @@ class IPFamilyProxy:
                 task.cancel()
                 writer.transport.abort()
             await asyncio.gather(*pending, return_exceptions=True)
+            for lookup in self._lookups.values():
+                lookup.cancel()
+            await asyncio.gather(*self._lookups.values(), return_exceptions=True)
             await server.wait_closed()
 
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -221,21 +240,34 @@ class IPFamilyProxy:
         with self._attempt_lock:
             self._attempts.append(ConnectionAttempt(hostname, port, self.mode, **fields))
 
-    async def _connect(self, hostname: str, port: int) -> tuple[_Streams | None, int]:
+    async def _resolve(self, hostname: str) -> HostnameResolution:
         loop = asyncio.get_running_loop()
         try:
             async with asyncio.timeout(self._connect_timeout):
-                # Resolve both families so an absent family differs from a DNS error.
-                results = await loop.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+                results = await loop.getaddrinfo(hostname, 0, type=socket.SOCK_STREAM)
+            resolution = HostnameResolution(tuple((family, address) for family, _, _, _, address in results))
         except TimeoutError:
-            self._record(hostname, port, failure_reason="dns_timeout")
-            return None, 4
-        except OSError as error:
-            self._record(hostname, port, failure_reason="dns_failure", detail=str(error))
+            resolution = HostnameResolution(failure_reason="dns_timeout")
+        except (OSError, UnicodeError) as error:
+            resolution = HostnameResolution(failure_reason="dns_failure", detail=str(error))
+        with self._attempt_lock:
+            self._resolutions[hostname] = resolution
+        return resolution
+
+    async def _connect(self, hostname: str, port: int) -> tuple[_Streams | None, int]:
+        key = hostname.lower()
+        lookup = self._lookups.get(key)
+        if lookup is None:
+            with self._attempt_lock:
+                self._resolutions[key] = HostnameResolution(failure_reason="dns_cancelled")
+            lookup = self._lookups[key] = asyncio.create_task(self._resolve(key))
+        resolution = await asyncio.shield(lookup)
+        if resolution.failure_reason:
+            self._record(hostname, port, failure_reason=resolution.failure_reason, detail=resolution.detail)
             return None, 4
 
         addresses = dict.fromkeys(
-            address for family, _, _, _, address in results
+            (address[0], port, *address[2:]) for family, address in resolution.addresses
             if family == self._family
             and (family != socket.AF_INET6 or ipaddress.IPv6Address(address[0]).ipv4_mapped is None)
         )

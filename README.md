@@ -187,4 +187,14 @@ Restricted measurements start a loopback SOCKS5 proxy before Chromium and close 
 
 Reports and JSON exports include `network_mode.connection_attempts` and `network_mode.observed_remote_addresses`. Restricted peers come from connected upstream sockets. A TCP connection can carry multiple resources. The resource table and CSV retain browser-level classification, while the proxy attempts distinguish unavailable families, DNS failures, TCP failures, and timeouts. A completed report can describe failed navigation or unavailable resources. If no upstream peer connected, enforcement verification is recorded as `no_upstream_connections_observed`.
 
+Expand **IP details** in the resource table or select a dependency graph node to view resource IP evidence. The JSON report includes `ip_evidence` on resources and graph nodes. CSV exports append equivalent address and attribution columns. Resolved addresses describe a hostname lookup or URL literal. Unrestricted response metadata can identify a resource peer. In restricted mode the proxy records attempted and connected peers by hostname and port, so the resource peer is left blank. The collector performs at most one enrichment lookup per hostname per measurement and reuses the proxy's lookup where available. Chromium may resolve hostnames independently in unrestricted mode. The system resolver can return different results across measurements.
+
+### IPv6 readiness
+
+Run **Unrestricted** for the baseline, then **IPv6-only** for the same URL. The dashboard and exports pair the displayed run with the latest eligible saved counterpart for that URL. The comparison IDs are included in the report. The dependency graph uses DNS capability colors independent of request success. Green indicates both families were returned, red indicates IPv4 only, blue indicates IPv6 only, and grey indicates a failed or inconclusive lookup. IP literals use their address family directly.
+
+DNS readiness is the share of unique unrestricted HTTP(S) URLs with IPv6 capability. Unknown resources remain in the denominator. HTTP readiness is the share of those same URLs with a successful network response and IPv6 upstream evidence in the comparison run. Failed, undiscovered, and unverified results are counted separately. The HTTP score is blank until a comparable IPv6-only run has attempted navigation. URL matching preserves the query and ignores fragments and explicit default ports.
+
+DNS classifications describe the system resolver's answers at measurement time. A successful lookup returning one family establishes absence from that result. The system resolver can hide individual record-type errors. IPv6 upstream evidence is scoped to the proxy connection and can include NAT64 paths.
+
 Run `python -m unittest discover -s tests -p test_phase3_network_modes.py -v` for dashboard, collector, and cleanup verification against the existing controlled site served over both loopback families.

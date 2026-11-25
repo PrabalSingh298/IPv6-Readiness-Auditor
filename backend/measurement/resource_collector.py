@@ -14,6 +14,8 @@ from backend.measurement.dependency_graph import build_dependency_graph
 from backend.measurement.failure_classifier import classify_resource
 from backend.measurement.ip_family_proxy import IPFamilyProxy
 from backend.measurement.network_mode import build_network_mode_report, validate_mode
+from backend.measurement.readiness import calculate_readiness, classify_dns_capability
+from backend.measurement.resource_ip_evidence import add_ip_evidence, response_peer
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -63,9 +65,11 @@ def collect_resources(
     measurement_start = time.perf_counter()
     resources: dict[str, dict] = {}
     cdp_initiators: dict[str, list[dict]] = {}
-    direct_peers: set[str] = set()
+    network_responses: list[tuple[str, str, int, str | None]] = []
+    cached_requests: set[str] = set()
     navigation: dict = {
         "requested_url": target_url,
+        "attempted": False,
         "completed": False,
         "timed_out": False,
         "http_status": None,
@@ -156,7 +160,17 @@ def collect_resources(
             cdp_session = page.context.new_cdp_session(page)
             cdp_session.send("Network.enable")
 
+            def record_network_response(event: dict, response: dict) -> None:
+                if not response.get("url") or any(response.get(field) for field in (
+                    "fromDiskCache", "fromPrefetchCache", "fromServiceWorker",
+                )):
+                    return
+                peer = response_peer(response) if proxy is None else None
+                network_responses.append((event["requestId"], response["url"], response["status"], peer))
+
             def on_request_will_be_sent(event: dict) -> None:
+                if redirect := event.get("redirectResponse"):
+                    record_network_response(event, redirect)
                 request_url = event.get("request", {}).get("url")
                 if not request_url:
                     return
@@ -187,24 +201,12 @@ def collect_resources(
                 }
                 cdp_initiators.setdefault(request_url, []).append(initiator_record)
 
-            def on_cdp_response(event: dict) -> None:
-                response = event.get("response", {})
-                remote_address = response.get("remoteIPAddress")
-                if not remote_address or response.get("fromDiskCache") or response.get("fromServiceWorker"):
-                    return
-                try:
-                    address = ipaddress.ip_address(remote_address.strip("[]"))
-                except ValueError:
-                    return
-                if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
-                    address = address.ipv4_mapped
-                direct_peers.add(str(address))
-
             cdp_session.on("Network.requestWillBeSent", on_request_will_be_sent)
-            if proxy is None:
-                cdp_session.on("Network.responseReceived", on_cdp_response)
+            cdp_session.on("Network.responseReceived", lambda event: record_network_response(event, event["response"]))
+            cdp_session.on("Network.requestServedFromCache", lambda event: cached_requests.add(event["requestId"]))
 
             try:
+                navigation["attempted"] = True
                 response = page.goto(target_url, wait_until="domcontentloaded", timeout=timeout_ms)
                 navigation["completed"] = True
                 navigation["final_url"] = page.url
@@ -238,9 +240,25 @@ def collect_resources(
         resource["failure_classification"] = classify_resource(resource)
         cleaned_resources.append(resource)
 
+    response_peers: dict[str, set[str]] = {}
+    for request_id, resource_url, status, peer in network_responses:
+        if request_id in cached_requests:
+            continue
+        if peer:
+            response_peers.setdefault(resource_url, set()).add(peer)
+        resource = resources.get(resource_url)
+        if resource and resource["http_status"] == status:
+            response = resource["raw_evidence"].get("response")
+            if response and not response["from_service_worker"]:
+                response["from_network"] = True
+    attempts = proxy.connection_attempts if proxy else ()
+    add_ip_evidence(cleaned_resources, response_peers, proxy.hostname_resolutions if proxy else {}, attempts)
+    for resource in cleaned_resources:
+        resource["dns_capability"] = classify_dns_capability(resource)
     dependency_graph = build_dependency_graph(cleaned_resources)
 
-    network_mode = build_network_mode_report(mode, proxy.connection_attempts if proxy else (), direct_peers)
+    direct_peers = {peer for peers in response_peers.values() for peer in peers}
+    network_mode = build_network_mode_report(mode, attempts, direct_peers)
     network_mode["measurement_completed_at"] = datetime.now(timezone.utc).isoformat()
 
     report = {
@@ -273,6 +291,8 @@ def collect_resources(
             ),
         },
     }
+    if mode == "unrestricted":
+        report["readiness"] = calculate_readiness(report)
 
     DATA_DIRECTORY.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

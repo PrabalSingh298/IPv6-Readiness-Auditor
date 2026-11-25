@@ -79,6 +79,18 @@
         </div>
       </div>
 
+      <section class="panel classification-panel" aria-labelledby="readiness-title">
+        <div class="panel-heading compact-heading"><h2 id="readiness-title">IPv6 readiness</h2></div>
+        <dl class="readiness-metrics">
+          <div><dt>DNS IPv6 readiness</dt><dd id="dns-readiness">—</dd></div>
+          <div><dt>HTTP IPv6 readiness</dt><dd id="http-readiness">—</dd></div>
+          <div><dt>Unique baseline resources</dt><dd id="baseline-total">—</dd></div>
+        </dl>
+        <p id="readiness-status" class="form-hint"></p>
+        <div id="readiness-distribution" class="readiness-distribution" aria-hidden="true" hidden></div>
+        <ul id="readiness-counts" class="capability-legend" aria-label="Baseline resource classification" hidden></ul>
+      </section>
+
       <div class="metric-grid">
         <article class="metric-card metric-total">
           <span class="metric-label">Resources observed</span>
@@ -200,14 +212,16 @@
           <span id="graph-count-label" class="count-pill">0 relationships</span>
         </div>
         <p class="graph-description">Edges are drawn only when Chromium provided initiator evidence matching a captured resource.</p>
+        <ul id="graph-capability-legend" class="capability-legend" aria-label="DNS capability colors"></ul>
         <div id="graph-empty-state" class="graph-empty">
           <span class="graph-empty-icon" aria-hidden="true">◇</span>
           <strong>No verified relationships to display</strong>
           <span>Unknown initiators are not shown as invented connections.</span>
         </div>
         <div id="graph-scroll" class="graph-scroll hidden">
-          <svg id="dependency-graph" role="img" aria-label="Resource dependency graph"></svg>
+          <svg id="dependency-graph" role="group" aria-label="Resource dependency graph"></svg>
         </div>
+        <div id="graph-node-details" class="unknown-resources" hidden></div>
         <div id="unknown-resources" class="unknown-resources hidden"></div>
       </section>
 
