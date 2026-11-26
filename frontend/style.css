@@ -156,9 +156,50 @@ h2 { margin: 0; color: #193550; font-size: 17px; letter-spacing: -0.02em; }
 .filter-control { min-width: 145px; }
 .filter-control select { height: 36px; padding: 0 28px 0 10px; font-size: 11px; }
 .table-scroll { overflow-x: auto; }
-.observed-resources-scroll { max-height: clamp(14rem, 58dvh, 34rem); overflow: auto; }
+.observed-resources-list { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+#resource-scrollbar {
+  position: relative;
+  width: 18px;
+  margin-left: 6px;
+  border: 1px solid #c7d4df;
+  border-radius: 9px;
+  background: #edf2f6;
+  cursor: pointer;
+  touch-action: none;
+}
+#resource-scrollbar:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+#resource-scroll-thumb {
+  position: absolute;
+  inset: 0 2px auto;
+  border: 1px solid #405c74;
+  border-radius: 8px;
+  background: #536f87;
+  cursor: grab;
+}
+#resource-scrollbar:active #resource-scroll-thumb { cursor: grabbing; }
+.observed-resources-scroll {
+  --resource-row-height: 4.5rem;
+  --resource-header-height: 2rem;
+  overflow: auto;
+}
+.observed-resources-scroll.ten-row-limit::-webkit-scrollbar:vertical { width: 0; }
+.observed-resources-scroll.ten-row-limit {
+  max-height: calc(var(--resource-header-height) + 10 * var(--resource-row-height) + var(--resource-horizontal-scrollbar, 0px));
+  scroll-padding-top: var(--resource-header-height);
+  scroll-snap-type: y mandatory;
+}
 .observed-resources-scroll table { border-collapse: separate; border-spacing: 0; }
-.observed-resources-scroll thead th { position: sticky; top: 0; z-index: 1; background: #f8fafb; }
+.observed-resources-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: var(--resource-header-height);
+  padding-block: 0;
+  background: #f8fafb;
+  white-space: nowrap;
+}
+.observed-resources-scroll tbody tr[data-resource-index] { height: var(--resource-row-height); scroll-snap-align: start; }
+.observed-resources-scroll summary, .observed-resources-scroll .type-tag { white-space: nowrap; }
 table { width: 100%; border-collapse: collapse; text-align: left; }
 thead { color: #8091a1; background: #f8fafb; }
 th { padding: 10px 11px; border-bottom: 1px solid #e8eef2; font-size: 9px; font-weight: 750; letter-spacing: 0.08em; text-transform: uppercase; }

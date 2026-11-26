@@ -5,6 +5,9 @@ const statusMessage = document.querySelector("#status-message");
 const statusTime = document.querySelector("#status-time");
 const resultsSection = document.querySelector("#results-section");
 const tableBody = document.querySelector("#resource-table-body");
+const resourceScroll = document.querySelector(".observed-resources-scroll");
+const resourceScrollbar = document.querySelector("#resource-scrollbar");
+const resourceScrollThumb = document.querySelector("#resource-scroll-thumb");
 const searchInput = document.querySelector("#resource-search");
 const resultFilter = document.querySelector("#result-filter");
 const typeFilter = document.querySelector("#type-filter");
@@ -323,6 +326,23 @@ function renderResourceTable() {
     row.dataset.resourceIndex = String(index);
     tableBody.append(row);
   }
+
+  resourceScroll.classList.toggle("ten-row-limit", visible.length > 10);
+  resourceScroll.scrollTop = 0;
+  syncResourceScrollbar();
+}
+
+function syncResourceScrollbar() {
+  const scrollRange = resourceScroll.scrollHeight - resourceScroll.clientHeight;
+  resourceScrollbar.hidden = !resourceScroll.classList.contains("ten-row-limit") || scrollRange <= 0;
+  if (resourceScrollbar.hidden) return;
+
+  const trackHeight = resourceScrollbar.clientHeight;
+  const thumbHeight = Math.min(trackHeight, Math.max(26, trackHeight * resourceScroll.clientHeight / resourceScroll.scrollHeight));
+  const progress = resourceScroll.scrollTop / scrollRange;
+  resourceScrollThumb.style.height = `${thumbHeight}px`;
+  resourceScrollThumb.style.transform = `translateY(${progress * (trackHeight - thumbHeight)}px)`;
+  resourceScrollbar.setAttribute("aria-valuenow", String(Math.round(progress * 100)));
 }
 
 function createIPDetails(resource) {
@@ -484,3 +504,41 @@ function renderLimitations(report) {
 searchInput.addEventListener("input", renderResourceTable);
 resultFilter.addEventListener("change", renderResourceTable);
 typeFilter.addEventListener("change", renderResourceTable);
+
+const resourceResizeObserver = new ResizeObserver(() => {
+  const horizontalScrollbar = resourceScroll.offsetHeight - resourceScroll.clientHeight;
+  resourceScroll.style.setProperty("--resource-horizontal-scrollbar", `${horizontalScrollbar}px`);
+  syncResourceScrollbar();
+});
+resourceResizeObserver.observe(resourceScroll);
+resourceResizeObserver.observe(tableBody);
+resourceScroll.addEventListener("scroll", syncResourceScrollbar);
+
+let thumbGrabOffset = 0;
+function scrollFromPointer(event) {
+  const trackTop = resourceScrollbar.getBoundingClientRect().top + resourceScrollbar.clientTop;
+  const travel = resourceScrollbar.clientHeight - resourceScrollThumb.offsetHeight;
+  if (travel <= 0) return;
+  const progress = (event.clientY - trackTop - thumbGrabOffset) / travel;
+  resourceScroll.scrollTop = progress * (resourceScroll.scrollHeight - resourceScroll.clientHeight);
+}
+resourceScrollbar.addEventListener("pointerdown", (event) => {
+  if (!event.isPrimary || event.button !== 0) return;
+  resourceScrollbar.focus({ preventScroll: true });
+  resourceScrollbar.setPointerCapture(event.pointerId);
+  const thumb = resourceScrollThumb.getBoundingClientRect();
+  thumbGrabOffset = event.target === resourceScrollThumb ? event.clientY - thumb.top : thumb.height / 2;
+  scrollFromPointer(event);
+});
+resourceScrollbar.addEventListener("pointermove", (event) => {
+  if (resourceScrollbar.hasPointerCapture(event.pointerId)) scrollFromPointer(event);
+});
+resourceScrollbar.addEventListener("keydown", (event) => {
+  const page = resourceScroll.clientHeight - resourceScroll.querySelector("thead").offsetHeight;
+  const offsets = { ArrowUp: -page / 10, ArrowDown: page / 10, PageUp: -page, PageDown: page };
+  if (event.key === "Home") resourceScroll.scrollTop = 0;
+  else if (event.key === "End") resourceScroll.scrollTop = resourceScroll.scrollHeight;
+  else if (event.key in offsets) resourceScroll.scrollTop += offsets[event.key];
+  else return;
+  event.preventDefault();
+});

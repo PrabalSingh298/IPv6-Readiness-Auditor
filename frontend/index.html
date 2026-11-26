@@ -190,21 +190,26 @@
             </select>
           </label>
         </div>
-        <div class="table-scroll observed-resources-scroll" tabindex="0" role="region" aria-label="Observed resource list">
-          <table>
-            <thead>
-              <tr>
-                <th scope="col">Resource URL</th>
-                <th scope="col">Type</th>
-                <th scope="col">HTTP</th>
-                <th scope="col">Result</th>
-                <th scope="col">Failure classification</th>
-              </tr>
-            </thead>
-            <tbody id="resource-table-body">
-              <tr><td class="empty-cell" colspan="5">Run a measurement to view browser resources.</td></tr>
-            </tbody>
-          </table>
+        <div class="observed-resources-list">
+          <div id="observed-resource-list" class="table-scroll observed-resources-scroll" tabindex="0" role="region" aria-label="Observed resource list">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Resource URL</th>
+                  <th scope="col">Type</th>
+                  <th scope="col">HTTP</th>
+                  <th scope="col">Result</th>
+                  <th scope="col">Failure classification</th>
+                </tr>
+              </thead>
+              <tbody id="resource-table-body">
+                <tr><td class="empty-cell" colspan="5">Run a measurement to view browser resources.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="resource-scrollbar" role="scrollbar" tabindex="0" aria-label="Scroll observed resources" aria-controls="observed-resource-list" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden>
+            <span id="resource-scroll-thumb" aria-hidden="true"></span>
+          </div>
         </div>
         <p id="table-empty-state" class="table-empty hidden">No resources match these filters.</p>
       </section>
