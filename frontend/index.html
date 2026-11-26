@@ -108,9 +108,9 @@
           <span class="metric-footnote">Known unsuccessful resources</span>
         </article>
         <article class="metric-card metric-unknown">
-          <span class="metric-label">Inconclusive</span>
+          <span class="metric-label">Outcome unknown</span>
           <strong id="metric-inconclusive">—</strong>
-          <span class="metric-footnote">Cause could not be established</span>
+          <span class="metric-footnote">Requests without a recorded result</span>
         </article>
       </div>
 
@@ -144,10 +144,13 @@
         </div>
         <div class="classification-grid">
           <div class="classification-item"><span class="class-icon dns">D</span><span>DNS</span><strong id="count-dns">0</strong></div>
+          <div class="classification-item"><span class="class-icon dns">IP</span><span>IP family unavailable</span><strong id="count-family">0</strong></div>
           <div class="classification-item"><span class="class-icon connection">C</span><span>Connection</span><strong id="count-connection">0</strong></div>
           <div class="classification-item"><span class="class-icon tls">T</span><span>TLS</span><strong id="count-tls">0</strong></div>
           <div class="classification-item"><span class="class-icon http">H</span><span>HTTP</span><strong id="count-http">0</strong></div>
-          <div class="classification-item"><span class="class-icon inconclusive">?</span><span>Inconclusive</span><strong id="count-inconclusive">0</strong></div>
+          <div class="classification-item"><span class="class-icon tls">⏱</span><span>Timeout</span><strong id="count-timeout">0</strong></div>
+          <div class="classification-item"><span class="class-icon http">B</span><span>Browser</span><strong id="count-browser">0</strong></div>
+          <div class="classification-item"><span class="class-icon inconclusive">?</span><span>Unknown cause</span><strong id="count-inconclusive">0</strong></div>
         </div>
       </section>
 
@@ -170,11 +173,14 @@
               <option value="all">All results</option>
               <option value="failed">Failed resources</option>
               <option value="success">Successful resources</option>
-              <option value="inconclusive">Inconclusive resources</option>
+              <option value="unknown">Unknown classification</option>
               <option value="dns_failure">DNS failures</option>
+              <option value="address_family_unavailable">IP family unavailable</option>
               <option value="connection_failure">Connection failures</option>
               <option value="tls_failure">TLS failures</option>
               <option value="http_failure">HTTP failures</option>
+              <option value="timeout">Timeouts</option>
+              <option value="browser_failure">Browser failures</option>
             </select>
           </label>
           <label class="filter-control">
@@ -184,7 +190,7 @@
             </select>
           </label>
         </div>
-        <div class="table-scroll">
+        <div class="table-scroll observed-resources-scroll" tabindex="0" role="region" aria-label="Observed resource list">
           <table>
             <thead>
               <tr>

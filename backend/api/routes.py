@@ -284,6 +284,7 @@ def download_csv_report(job_id: str) -> Response:
     dns_counts = readiness.get("dns_counts") or {}
     http_counts = readiness.get("http_outcome_counts") or {}
     outcomes = readiness.get("http_resource_outcomes") or {}
+    failed_dependencies = readiness.get("http_undiscovered_with_failed_dependency") or {}
     readiness_columns = {
         "baseline_measurement_id": readiness.get("baseline_measurement_id"),
         "ipv6_measurement_id": readiness.get("ipv6_measurement_id"),
@@ -324,18 +325,25 @@ def download_csv_report(job_id: str) -> Response:
         "proxy_evidence_scope",
         "dns_capability",
         "baseline_ipv6_http_outcome",
+        "baseline_failed_dependency_url",
+        "failure_evidence_source",
+        "failure_requested_family",
+        "failure_timeout_stage",
+        "browser_error",
         *readiness_columns,
     ]
     writer = csv.DictWriter(output, fieldnames=columns)
     writer.writeheader()
     for resource in report.get("resources", []):
         classification = resource.get("failure_classification") or {}
+        failure_evidence = classification.get("evidence") or {}
         dependency = resource.get("dependency") or {}
         evidence = resource.get("ip_evidence") or {}
         resolved = evidence.get("resolved_addresses") or {}
         peer = evidence.get("connected_peer") or {}
         response_peers = evidence.get("response_peers") or []
         proxy_origin = evidence.get("proxy_origin") or {}
+        url_key = network_url_key(resource.get("url") or "")
         row = {
             "url": resource.get("url"),
             "hostname": resource.get("hostname"),
@@ -367,7 +375,12 @@ def download_csv_report(job_id: str) -> Response:
             "proxy_evidence_source": proxy_origin.get("source"),
             "proxy_evidence_scope": proxy_origin.get("scope"),
             "dns_capability": classify_dns_capability(resource),
-            "baseline_ipv6_http_outcome": outcomes.get(network_url_key(resource.get("url") or "")),
+            "baseline_ipv6_http_outcome": outcomes.get(url_key),
+            "baseline_failed_dependency_url": failed_dependencies.get(url_key),
+            "failure_evidence_source": failure_evidence.get("source"),
+            "failure_requested_family": failure_evidence.get("requested_family"),
+            "failure_timeout_stage": failure_evidence.get("timeout_stage"),
+            "browser_error": failure_evidence.get("browser_error_text") or failure_evidence.get("browser_error"),
             **readiness_columns,
         }
         for key, value in row.items():

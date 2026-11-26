@@ -15,6 +15,14 @@ let activeJob = null;
 
 const modeLabels = { unrestricted: "Unrestricted", ipv4_only: "IPv4-only", ipv6_only: "IPv6-only" };
 const capabilityLabels = { ipv4_only: "IPv4-only", dual_stack: "Dual-stack", ipv6_only: "IPv6-only", unknown: "Unknown" };
+const failureLabels = {
+  dns_failure: "DNS failure", address_family_unavailable: "IP family unavailable", connection_failure: "Connection failure",
+  tls_failure: "TLS failure", http_failure: "HTTP failure", timeout: "Timeout", browser_failure: "Browser failure", unknown: "Unknown cause",
+};
+const failureCountIds = {
+  dns_failure: "dns", address_family_unavailable: "family", connection_failure: "connection", tls_failure: "tls",
+  http_failure: "http", timeout: "timeout", browser_failure: "browser", unknown: "inconclusive",
+};
 const connectionOutcomes = {
   address_family_unavailable: "Requested IP family unavailable",
   dns_failure: "DNS resolution failed",
@@ -103,29 +111,25 @@ function renderReport(report) {
   resultsSection.classList.remove("hidden");
   const summary = report.summary || {};
   const resources = report.resources || [];
-  const classified = Object.fromEntries(
-    ["dns_failure", "connection_failure", "tls_failure", "http_failure", "inconclusive"]
-      .map((category) => [category, resources.filter((resource) => resource.failure_classification?.category === category).length]),
-  );
-  const successCount = resources.filter((resource) => resource.success === true).length;
-  const inconclusiveCount = resources.filter((resource) =>
-    resource.failure_classification?.category === "inconclusive" || resource.success === null
-  ).length;
-  const failedCount = resources.filter((resource) =>
-    resource.success === false && resource.failure_classification?.category !== "inconclusive"
-  ).length;
+  const classified = summary.failure_categories || {};
+  if (!summary.failure_categories) {
+    for (const resource of resources) {
+      if (resource.success === false) {
+        const category = failureCategory(resource);
+        classified[category] = (classified[category] || 0) + 1;
+      }
+    }
+  }
 
   document.querySelector("#result-title").textContent = report.target_url || "Measurement results";
   document.querySelector("#result-subtitle").textContent = `${modeLabels[report.measurement_mode] || modeLabels.unrestricted} · ${new Date(report.started_at).toLocaleString()}`;
   document.querySelector("#metric-total").textContent = summary.total_resources ?? resources.length;
-  document.querySelector("#metric-success").textContent = successCount;
-  document.querySelector("#metric-failed").textContent = failedCount;
-  document.querySelector("#metric-inconclusive").textContent = inconclusiveCount;
-  document.querySelector("#count-dns").textContent = classified.dns_failure;
-  document.querySelector("#count-connection").textContent = classified.connection_failure;
-  document.querySelector("#count-tls").textContent = classified.tls_failure;
-  document.querySelector("#count-http").textContent = classified.http_failure;
-  document.querySelector("#count-inconclusive").textContent = inconclusiveCount;
+  document.querySelector("#metric-success").textContent = summary.successful_or_http_success ?? resources.filter((resource) => resource.success === true).length;
+  document.querySelector("#metric-failed").textContent = summary.failed ?? resources.filter((resource) => resource.success === false).length;
+  document.querySelector("#metric-inconclusive").textContent = summary.status_unknown ?? resources.filter((resource) => resource.success == null).length;
+  for (const [category, id] of Object.entries(failureCountIds)) {
+    document.querySelector(`#count-${id}`).textContent = classified[category] || 0;
+  }
 
   populateTypeFilter(resources);
   renderReadiness(report.readiness);
@@ -158,6 +162,8 @@ function renderReadiness(readiness) {
     status = "The unrestricted run captured no HTTP(S) resources.";
   } else if (total && outcomes) {
     status = `${outcomes.retrieved} retrieved over IPv6 · ${outcomes.failed} failed · ${outcomes.undiscovered} undiscovered · ${outcomes.unverified} unverified`;
+    const dependent = Object.keys(readiness.http_undiscovered_with_failed_dependency || {}).length;
+    if (dependent) status += ` · ${dependent} undiscovered with a failed baseline dependency`;
   } else if (total) {
     status = "Run IPv6-only for this URL to measure HTTP IPv6 readiness.";
   }
@@ -219,11 +225,15 @@ function populateTypeFilter(resources) {
   typeFilter.value = types.includes(currentValue) ? currentValue : "all";
 }
 
-function resourceResult(resource) {
+function failureCategory(resource) {
   const category = resource.failure_classification?.category;
-  if (category === "success" || resource.success === true) return "success";
-  if (category === "inconclusive" || resource.success === null) return "inconclusive";
-  return "failed";
+  return !category || category === "inconclusive" ? "unknown" : category;
+}
+
+function resourceResult(resource) {
+  if (resource.success === true) return "success";
+  if (resource.success === false) return "failed";
+  return "unknown";
 }
 
 function renderResourceTable() {
@@ -233,14 +243,13 @@ function renderResourceTable() {
   const typeValue = typeFilter.value;
   const resources = activeReport.resources || [];
   const visible = resources.map((resource, index) => ({ resource, index })).filter(({ resource }) => {
-    const category = resource.failure_classification?.category || "inconclusive";
+    const category = failureCategory(resource);
     const searchable = `${resource.url || ""} ${resource.hostname || ""}`.toLowerCase();
     const matchesQuery = !query || searchable.includes(query);
     const matchesType = typeValue === "all" || resource.resource_type === typeValue;
     const matchesResult = resultValue === "all"
       || (resultValue === "failed" && resourceResult(resource) === "failed")
       || (resultValue === "success" && resourceResult(resource) === "success")
-      || (resultValue === "inconclusive" && resourceResult(resource) === "inconclusive")
       || category === resultValue;
     return matchesQuery && matchesType && matchesResult;
   });
@@ -286,15 +295,29 @@ function renderResourceTable() {
     const result = resourceResult(resource);
     const badge = document.createElement("span");
     badge.className = `result-badge ${result}`;
-    badge.textContent = result === "success" ? "Success" : result === "failed" ? "Failed" : "Inconclusive";
+    badge.textContent = result === "success" ? "Success" : result === "failed" ? "Failed" : "Unknown";
     resultCell.append(badge);
     row.append(resultCell);
 
     const failureCell = document.createElement("td");
     const failure = resource.failure_classification;
-    failureCell.className = failure && failure.category !== "success" ? "failure-label" : "failure-label clear";
-    failureCell.textContent = failure && failure.category !== "success" ? failure.category.replaceAll("_", " ") : "—";
-    failureCell.title = failure?.reason || "";
+    failureCell.className = result === "failed" ? "failure-label" : "failure-label clear";
+    failureCell.textContent = "—";
+    if (result === "failed") {
+      const details = document.createElement("details");
+      const label = document.createElement("summary");
+      const category = failureCategory(resource);
+      const family = failure?.evidence?.requested_family;
+      label.textContent = family ? `${family.replace("ipv", "IPv")} address unavailable` : failureLabels[category] || failureLabels.unknown;
+      details.append(label);
+      for (const text of [failure?.reason, failure?.evidence?.browser_error_text || failure?.evidence?.browser_error]) {
+        if (!text) continue;
+        const line = document.createElement("div");
+        line.textContent = text;
+        details.append(line);
+      }
+      failureCell.replaceChildren(details);
+    }
     row.append(failureCell);
 
     row.dataset.resourceIndex = String(index);
@@ -448,7 +471,7 @@ function renderLimitations(report) {
     limitations.push("This saved report used the earlier IPv4 candidate mode.");
   }
   if (report.nat64_status === "unknown") limitations.push("NAT64/464XLAT status is unknown; observed IPv6 may involve translation.");
-  if ((report.resources || []).some((resource) => resource.failure_classification?.category === "inconclusive")) limitations.push("Some resource failures could not be assigned a specific cause.");
+  if ((report.resources || []).some((resource) => resource.success === false && failureCategory(resource) === "unknown")) limitations.push("Some resource failures could not be assigned a specific cause.");
   if (!report.navigation?.completed) limitations.push("Navigation did not complete successfully; results may be incomplete.");
   document.querySelector("#limitations-list").replaceChildren(...limitations.map((text) => {
     const item = document.createElement("li");

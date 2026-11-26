@@ -1,3 +1,4 @@
+from collections import defaultdict, deque
 from urllib.parse import urlsplit, urlunsplit
 
 
@@ -64,6 +65,23 @@ def _retrieved_over_ipv6(resource: dict) -> bool:
     )
 
 
+def _undiscovered_after_dependency_failure(baseline: dict, outcomes: dict[str, str]) -> dict[str, str]:
+    children = defaultdict(list)
+    for edge in (baseline.get("dependency_graph") or {}).get("edges", []):
+        parent, child = network_url_key(edge["parent_url"]), network_url_key(edge["child_url"])
+        if parent and child and outcomes.get(child) == "undiscovered":
+            children[parent].append(child)
+    pending = deque((url, url) for url, outcome in outcomes.items() if outcome == "failed")
+    related = {}
+    while pending:
+        parent, failed = pending.popleft()
+        for child in children[parent]:
+            if child not in related:
+                related[child] = failed
+                pending.append((child, failed))
+    return related
+
+
 def calculate_readiness(baseline: dict, ipv6_report: dict | None = None) -> dict:
     baseline_resources = _network_resources(baseline)
     counts = dict.fromkeys(CAPABILITIES, 0)
@@ -101,4 +119,5 @@ def calculate_readiness(baseline: dict, ipv6_report: dict | None = None) -> dict
         "http_ipv6_readiness_percent": round(100 * outcome_counts["retrieved"] / total, 2) if total and outcome_counts is not None else None,
         "http_outcome_counts": outcome_counts,
         "http_resource_outcomes": outcomes,
+        "http_undiscovered_with_failed_dependency": _undiscovered_after_dependency_failure(baseline, outcomes) if outcomes is not None else None,
     }

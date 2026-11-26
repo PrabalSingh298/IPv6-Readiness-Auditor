@@ -52,6 +52,18 @@ def _address_lists(addresses: list[str]) -> dict[str, list[str]]:
     return {family: sorted(values) for family, values in families.items()}
 
 
+def web_origin(url: str) -> tuple[str, int] | None:
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return None
+    host = parts.hostname
+    try:
+        host = str(ipaddress.ip_address(host))
+    except ValueError:
+        pass  # Chromium already serializes internationalized HTTP hostnames as ASCII.
+    return host, parts.port if parts.port is not None else (443 if parts.scheme == "https" else 80)
+
+
 def add_ip_evidence(
     resources: list[dict],
     response_peers: dict[str, set[str]],
@@ -61,18 +73,17 @@ def add_ip_evidence(
     origins = {}
     literals = {}
     for resource in resources:
-        url = urlsplit(resource["url"])
-        if url.scheme not in ("http", "https") or not url.hostname:
+        url = resource["url"]
+        origin = web_origin(url)
+        if origin is None:
             continue
+        host, _ = origin
         try:
-            literal = ipaddress.ip_address(url.hostname)
-            host = str(literal)
+            ipaddress.ip_address(host)
             literals[host] = host
         except ValueError:
-            # Chromium already serializes internationalized HTTP hostnames as ASCII.
-            host = url.hostname
-        port = url.port if url.port is not None else (443 if url.scheme == "https" else 80)
-        origins[resource["url"]] = (host, port)
+            pass
+        origins[url] = origin
 
     hosts = {host for host, _ in origins.values()}
     other_resolutions = _resolve_missing(hosts - proxy_resolutions.keys() - literals.keys())
@@ -93,11 +104,15 @@ def add_ip_evidence(
     proxy_origins = {}
     for attempt in attempts:
         origin = (attempt.hostname.lower(), attempt.port)
-        group = proxy_origins.setdefault(origin, {"attempted": set(), "connected": set()})
+        group = proxy_origins.setdefault(origin, {"attempted": set(), "connected": set(), "failures": set(), "successful_attempts": 0})
         if attempt.attempted_ip:
             group["attempted"].add(attempt.attempted_ip)
-        if attempt.success and attempt.remote_ip and attempt.upstream_family:
-            group["connected"].add((attempt.remote_ip, attempt.upstream_family))
+        if attempt.success:
+            group["successful_attempts"] += 1
+            if attempt.remote_ip and attempt.upstream_family:
+                group["connected"].add((attempt.remote_ip, attempt.upstream_family))
+        else:
+            group["failures"].add(attempt.failure_reason or "unknown")
 
     for resource in resources:
         url = resource["url"]
@@ -122,5 +137,7 @@ def add_ip_evidence(
                 "scope": "hostname_port",
                 "attempted_addresses": sorted(group["attempted"]),
                 "connected_peers": [{"ip": ip, "family": family} for ip, family in sorted(group["connected"])],
+                "failure_reasons": sorted(group["failures"]),
+                "successful_attempts": group["successful_attempts"],
             }
         resource["ip_evidence"] = evidence

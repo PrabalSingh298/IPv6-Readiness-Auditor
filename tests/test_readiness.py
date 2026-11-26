@@ -44,6 +44,12 @@ class ReadinessTests(unittest.TestCase):
         paired = calculate_readiness(baseline, ipv6)
         self.assertEqual(paired["http_ipv6_readiness_percent"], 25)
         self.assertEqual(paired["http_outcome_counts"], {"retrieved": 1, "failed": 1, "undiscovered": 1, "unverified": 1})
+        baseline["dependency_graph"] = {"edges": [{"parent_url": "https://site.test/pixel?a=1",
+                                                    "child_url": "https://site.test/pixel?a=2"}]}
+        paired = calculate_readiness(baseline, ipv6)
+        self.assertEqual(paired["http_resource_outcomes"]["https://site.test/pixel?a=2"], "undiscovered")
+        self.assertEqual(paired["http_undiscovered_with_failed_dependency"],
+                         {"https://site.test/pixel?a=2": "https://site.test/pixel?a=1"})
 
     def test_unknown_empty_and_unperformed_measurements(self):
         for failure in ("dns_failure", "dns_timeout", "dns_cancelled"):

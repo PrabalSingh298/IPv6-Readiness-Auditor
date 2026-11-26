@@ -158,12 +158,19 @@ Run the Phase 2 live-site checks separately with:
 
 ## Phase 5 resource failure classification
 
-Each resource now includes `failure_classification` with a category, short
-reason, and the HTTP status/browser error evidence used. Categories are
-`success`, `dns_failure`, `connection_failure`, `tls_failure`, `http_failure`,
-and `inconclusive`. Generic browser errors and ambiguous navigation timeouts
-remain inconclusive. The original `failure`, HTTP status, raw evidence, and
-dependency graph are preserved.
+Each resource includes `failure_classification` with a reason and supporting
+evidence. The dashboard distinguishes DNS failure, requested IP family
+unavailability, connection failure, TLS failure, HTTP errors, timeout, browser
+blocking or cancellation, and unknown causes. A timeout can identify the DNS,
+connection, or request stage. Observed Resources scrolls independently, with
+its search and filters above the sticky table header.
+
+Restricted measurements use matching proxy observations at hostname-and-port
+scope. Mixed outcomes, missing evidence, and generic SOCKS errors with an
+ambiguous cause remain unknown. The original browser error, HTTP status, and
+matching Chromium failure metadata are retained. Reports count only observed
+failures. In a paired IPv6 comparison, undiscovered resources with a failed
+baseline dependency are identified separately as an association.
 
 Run the Phase 5 controlled and classification tests:
 
@@ -171,9 +178,8 @@ Run the Phase 5 controlled and classification tests:
 .\.venv\Scripts\python.exe tests\test_failure_classification.py
 ```
 
-The test uses browser-supplied error strings for classification boundaries and
-a local controlled HTTP server for success, 404, and 500 responses. No
-IPv4/IPv6 cause is inferred from generic network errors.
+The tests use browser error strings, mocked proxy outcomes, and a local HTTP
+server for success, 404, and 500 responses.
 
 ## Phase 3 network mode setup
 

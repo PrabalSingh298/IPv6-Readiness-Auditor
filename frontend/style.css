@@ -136,7 +136,7 @@ h2 { margin: 0; color: #193550; font-size: 17px; letter-spacing: -0.02em; }
 .capability-legend li::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 6px; border-radius: 50%; background: var(--cap-color); }
 .compact-heading { margin-bottom: 15px; }
 .small-copy { font-size: 10px; }
-.classification-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.classification-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .classification-item { min-height: 53px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid #edf1f4; border-radius: 9px; color: #64788a; font-size: 11px; }
 .classification-item strong { margin-left: auto; color: #29455e; font-size: 15px; }
 .class-icon { width: 23px; height: 23px; display: grid; flex: 0 0 auto; place-items: center; border-radius: 7px; font-size: 10px; font-weight: 750; }
@@ -156,6 +156,9 @@ h2 { margin: 0; color: #193550; font-size: 17px; letter-spacing: -0.02em; }
 .filter-control { min-width: 145px; }
 .filter-control select { height: 36px; padding: 0 28px 0 10px; font-size: 11px; }
 .table-scroll { overflow-x: auto; }
+.observed-resources-scroll { max-height: clamp(14rem, 58dvh, 34rem); overflow: auto; }
+.observed-resources-scroll table { border-collapse: separate; border-spacing: 0; }
+.observed-resources-scroll thead th { position: sticky; top: 0; z-index: 1; background: #f8fafb; }
 table { width: 100%; border-collapse: collapse; text-align: left; }
 thead { color: #8091a1; background: #f8fafb; }
 th { padding: 10px 11px; border-bottom: 1px solid #e8eef2; font-size: 9px; font-weight: 750; letter-spacing: 0.08em; text-transform: uppercase; }
@@ -175,6 +178,7 @@ tbody tr:hover { background: #fbfdfd; }
 .result-badge.failed { color: #a63e49; background: #fbeded; }
 .result-badge.unknown { color: #936015; background: #fbf2df; }
 .failure-label { color: #8b5056; font-size: 10px; }
+.failure-label details { overflow-wrap: anywhere; }
 .failure-label.clear { color: #a0aab3; }
 .empty-cell { height: 88px; text-align: center; color: #91a0ad; }
 .table-empty { padding: 18px; color: #8393a1; text-align: center; font-size: 11px; }

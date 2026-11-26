@@ -124,7 +124,10 @@ class Phase3Tests(unittest.TestCase):
                     for asset_family, resource in assets.items():
                         self.assertEqual(resource["success"], family in (None, asset_family))
                         if not resource["success"]:
-                            self.assertEqual(resource["failure_classification"]["category"], "connection_failure")
+                            classification = resource["failure_classification"]
+                            self.assertEqual(classification["category"], "address_family_unavailable")
+                            self.assertEqual(classification["evidence"]["requested_family"], family)
+                            self.assertEqual(classification["evidence"]["source"], "proxy_origin")
                     download = page.request.get(urljoin(
                         dashboard_url, page.locator("#download-csv").get_attribute("href"),
                     ))
@@ -137,6 +140,7 @@ class Phase3Tests(unittest.TestCase):
                         self.assertEqual(proxies, [])
                         self.assertEqual(network["connection_attempts"], [])
                         self.assertEqual(set(network["observed_connection_address_families"]), {"ipv4", "ipv6"})
+                        self.check_resource_scrolling(page)
                         continue
                     self.assertEqual(report["enforcement_verification_status"], f"verified_{mode}")
                     self.assertEqual(network["observed_remote_addresses"],
@@ -148,6 +152,17 @@ class Phase3Tests(unittest.TestCase):
                     expect(page.locator("#connection-attempts")).to_be_visible()
                     expect(page.locator("#connection-attempts")).to_contain_text("Requested IP family unavailable")
                     self.assertFalse(proxies[-1].is_running)
+                    self.assertEqual(report["summary"]["failure_categories"]["address_family_unavailable"], 1)
+                    expect(page.locator("#count-family")).to_have_text("1")
+                    page.locator("#result-filter").select_option("address_family_unavailable")
+                    family_label = family.replace("ipv", "IPv")
+                    expect(page.locator("#resource-table-body tr")).to_have_count(1)
+                    expect(page.locator("#resource-table-body")).to_contain_text(f"{family_label} address unavailable")
+                    page.locator("#result-filter").select_option("all")
+                    export = next(row for row in csv.DictReader(download.text().splitlines())
+                                  if row["failure_category"] == "address_family_unavailable")
+                    self.assertEqual(export["failure_requested_family"], family)
+                    self.assertTrue(export["browser_error"])
 
             report = self.run_dashboard_measurement(
                 page, dashboard_url, f"http://127.0.0.1:{port}/index.html", "ipv6_only",
@@ -156,6 +171,35 @@ class Phase3Tests(unittest.TestCase):
             self.assertEqual(report["enforcement_verification_status"], "no_upstream_connections_observed")
             self.assertEqual(report["network_mode"]["observed_remote_addresses"], [])
             self.assertFalse(proxies[-1].is_running)
+
+    def check_resource_scrolling(self, page):
+        page.evaluate("""() => {
+            const first = activeReport.resources[0];
+            const copies = Array.from({length: 45}, (_, index) => ({...first, url: `https://scroll.test/asset-${index}`}));
+            activeReport.resources.push(...copies);
+            renderResourceTable();
+        }""")
+        try:
+            container = page.get_by_role("region", name="Observed resource list")
+            self.assertTrue(container.evaluate("node => node.scrollHeight > node.clientHeight"))
+            page.evaluate("window.scrollTo(0, 0)")
+            container.evaluate("node => node.scrollTop = node.scrollHeight")
+            self.assertGreater(container.evaluate("node => node.scrollTop"), 0)
+            self.assertEqual(page.evaluate("window.scrollY"), 0)
+            self.assertTrue(container.evaluate("node => Math.abs(node.querySelector('th').getBoundingClientRect().top - node.getBoundingClientRect().top) < 2"))
+            self.assertTrue(container.evaluate("node => node.querySelector('tbody tr:last-child').getBoundingClientRect().bottom <= node.getBoundingClientRect().bottom + 1"))
+            container.evaluate("node => node.scrollTop = 0")
+            page.get_by_role("heading", name="Dependency graph").scroll_into_view_if_needed()
+            self.assertGreater(page.evaluate("window.scrollY"), 0)
+            self.assertEqual(container.evaluate("node => node.scrollTop"), 0)
+            page.locator("#resource-search").fill("scroll.test/asset-44")
+            expect(page.locator("#resource-table-body tr")).to_have_count(1)
+            page.locator("#result-filter").select_option("failed")
+            expect(page.locator("#table-empty-state")).to_be_visible()
+        finally:
+            page.evaluate("activeReport.resources.splice(-45)")
+            page.locator("#resource-search").fill("")
+            page.locator("#result-filter").select_option("all")
 
     def check_ip_evidence(self, page, report, target, family, assets, csv_contents):
         index, resource = next((index, item) for index, item in enumerate(report["resources"]) if item["url"] == target)

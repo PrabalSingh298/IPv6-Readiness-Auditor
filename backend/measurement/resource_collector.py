@@ -3,6 +3,7 @@ import ipaddress
 import sys
 import time
 import uuid
+from collections import Counter
 from contextlib import ExitStack, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,11 +12,11 @@ from urllib.parse import urlparse
 from playwright.sync_api import Error as PlaywrightError, Request, Response, sync_playwright
 
 from backend.measurement.dependency_graph import build_dependency_graph
-from backend.measurement.failure_classifier import classify_resource
+from backend.measurement.failure_classifier import classify_resource, failure_category_counts
 from backend.measurement.ip_family_proxy import IPFamilyProxy
 from backend.measurement.network_mode import build_network_mode_report, validate_mode
 from backend.measurement.readiness import calculate_readiness, classify_dns_capability
-from backend.measurement.resource_ip_evidence import add_ip_evidence, response_peer
+from backend.measurement.resource_ip_evidence import add_ip_evidence, response_peer, web_origin
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -65,6 +66,9 @@ def collect_resources(
     measurement_start = time.perf_counter()
     resources: dict[str, dict] = {}
     cdp_initiators: dict[str, list[dict]] = {}
+    cdp_requests: dict[str, tuple[str, str]] = {}
+    cdp_failures: dict[tuple[str, str], list[dict]] = {}
+    origin_requests: Counter[tuple[str, int]] = Counter()
     network_responses: list[tuple[str, str, int, str | None]] = []
     cached_requests: set[str] = set()
     navigation: dict = {
@@ -82,6 +86,8 @@ def collect_resources(
 
     def on_request(request: Request) -> None:
         request_url = request.url
+        if proxy is not None and (origin := web_origin(request_url)):
+            origin_requests[origin] += 1
         if request_url not in resources:
             parsed = urlparse(request_url)
             resources[request_url] = {
@@ -174,6 +180,7 @@ def collect_resources(
                 request_url = event.get("request", {}).get("url")
                 if not request_url:
                     return
+                cdp_requests[event["requestId"]] = (request_url, event["request"]["method"])
 
                 initiator = event.get("initiator") or {}
                 stack = initiator.get("stack") or {}
@@ -201,9 +208,14 @@ def collect_resources(
                 }
                 cdp_initiators.setdefault(request_url, []).append(initiator_record)
 
+            def on_loading_failed(event: dict) -> None:
+                if request_key := cdp_requests.get(event["requestId"]):
+                    cdp_failures.setdefault(request_key, []).append(event)
+
             cdp_session.on("Network.requestWillBeSent", on_request_will_be_sent)
             cdp_session.on("Network.responseReceived", lambda event: record_network_response(event, event["response"]))
             cdp_session.on("Network.requestServedFromCache", lambda event: cached_requests.add(event["requestId"]))
+            cdp_session.on("Network.loadingFailed", on_loading_failed)
 
             try:
                 navigation["attempted"] = True
@@ -237,7 +249,11 @@ def collect_resources(
         initiators = cdp_initiators.get(resource["url"], [])
         if initiators:
             resource["dependency"].update(initiators[0])
-        resource["failure_classification"] = classify_resource(resource)
+        if failure := resource.get("failure"):
+            candidates = cdp_failures.get((resource["url"], resource["method"]), [])
+            matches = [event for event in candidates if event.get("errorText") == failure.get("browser_error_text")]
+            if len(matches) == 1:
+                resource["raw_evidence"]["cdp_loading_failed"] = matches[0]
         cleaned_resources.append(resource)
 
     response_peers: dict[str, set[str]] = {}
@@ -255,6 +271,9 @@ def collect_resources(
     add_ip_evidence(cleaned_resources, response_peers, proxy.hostname_resolutions if proxy else {}, attempts)
     for resource in cleaned_resources:
         resource["dns_capability"] = classify_dns_capability(resource)
+        resource["failure_classification"] = classify_resource(
+            resource, mode=mode, origin_request_count=origin_requests.get(web_origin(resource["url"]), 0),
+        )
     dependency_graph = build_dependency_graph(cleaned_resources)
 
     direct_peers = {peer for peers in response_peers.values() for peer in peers}
@@ -289,6 +308,7 @@ def collect_resources(
             "status_unknown": sum(
                 1 for resource in cleaned_resources if resource["success"] is None
             ),
+            "failure_categories": failure_category_counts(cleaned_resources),
         },
     }
     if mode == "unrestricted":
