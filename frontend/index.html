@@ -32,13 +32,13 @@
       </div>
     </section>
 
-    <section class="panel configuration-panel" aria-labelledby="config-heading">
+    <section id="measurement-panel" class="panel configuration-panel" aria-labelledby="config-heading">
       <div class="panel-heading">
         <div>
           <p class="eyebrow">CONFIGURATION</p>
           <h2 id="config-heading">Start a measurement</h2>
         </div>
-        <span class="step-badge">01</span>
+        <button id="show-history" class="secondary-button" type="button">Measurement History</button>
       </div>
       <form id="measurement-form">
         <label class="field url-field">
@@ -66,11 +66,44 @@
       </div>
     </section>
 
+    <section id="history-panel" class="panel configuration-panel" aria-labelledby="history-heading" hidden>
+      <div class="panel-heading">
+        <h2 id="history-heading" tabindex="-1">Measurement History</h2>
+        <button id="history-new-measurement" class="secondary-button" type="button">New Measurement</button>
+      </div>
+      <div class="table-toolbar history-toolbar">
+        <label class="search-control">
+          <input id="history-search" type="search" placeholder="Search website URL" aria-label="Search saved measurements">
+        </label>
+        <label class="filter-control">
+          <select id="history-mode" aria-label="Filter saved measurements by mode">
+            <option value="all">All modes</option>
+            <option value="unrestricted">Unrestricted</option>
+            <option value="ipv4_only">IPv4-only</option>
+            <option value="ipv6_only">IPv6-only</option>
+          </select>
+        </label>
+      </div>
+      <p id="history-status" class="form-hint" role="status"></p>
+      <div class="table-scroll history-scroll" role="region" aria-label="Saved measurement list" tabindex="0">
+        <table>
+          <thead>
+            <tr><th scope="col">Website</th><th scope="col">Measured</th><th scope="col">Mode</th><th scope="col">Resources</th><th scope="col">DNS IPv6</th><th scope="col">HTTP IPv6</th><th scope="col">Status</th><th scope="col"><span class="visually-hidden">Action</span></th></tr>
+          </thead>
+          <tbody id="history-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
     <section id="results-section" class="results-section hidden" aria-live="polite">
+      <div id="historical-actions" hidden>
+        <button id="back-to-history" class="secondary-button" type="button">Back to History</button>
+        <button id="report-new-measurement" class="secondary-button" type="button">New Measurement</button>
+      </div>
       <div class="results-heading">
         <div>
-          <p class="eyebrow">LATEST MEASUREMENT</p>
-          <h2 id="result-title">Measurement results</h2>
+          <p id="report-view-label" class="eyebrow">LATEST MEASUREMENT</p>
+          <h2 id="result-title" tabindex="-1">Measurement results</h2>
           <p id="result-subtitle" class="muted"></p>
         </div>
         <div class="export-actions">

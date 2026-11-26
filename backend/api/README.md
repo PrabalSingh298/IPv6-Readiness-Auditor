@@ -13,6 +13,10 @@
 | GET | `/api/measurements/{job_id}/resources/{resource_index}` | Returns one stored resource by its zero-based position in `resources`. |
 | GET | `/api/measurements/{job_id}/export.json` | Downloads the full report as JSON, including readiness pairing. |
 | GET | `/api/measurements/{job_id}/export.csv` | Downloads resource rows, flattened evidence, readiness totals, and baseline outcomes. |
+| GET | `/api/measurements/history` | Lists completed measurement summaries in reverse completion order. |
+| GET | `/api/measurements/history/{measurement_id}` | Returns the saved report and readiness snapshot by measurement UUID. |
+| GET | `/api/measurements/history/{measurement_id}/export.json` | Exports the historical report as JSON. |
+| GET | `/api/measurements/history/{measurement_id}/export.csv` | Exports the historical report as CSV. |
 
 Job IDs are UUID strings created by the API. Reports saved by the CLI are restored using their measurement ID. Use the API job ID when polling, even though the report also includes the collector's separate `measurement_id`.
 
@@ -22,7 +26,9 @@ Invalid request fields, modes, and ineligible targets receive HTTP 422. Unknown 
 
 Jobs move from `queued` to `running` and then to `completed` or `failed`. The worker invokes [the collector](../measurement/README.md), then writes the completed report in the project data directory with a `dashboard_job_id`. Startup restores usable `phase3_*.json` files into the job lookup.
 
-The report and both exports combine the selected run with the latest eligible saved counterpart for the same normalized target URL. The selected unrestricted run remains the baseline when viewed, and the selected IPv6-only run remains the comparison when viewed. Readiness data includes the source measurement IDs. The report on disk holds the collector's output and can differ from the current paired API response.
+The live report and both job-ID exports combine the selected run with the latest eligible saved counterpart for the same normalized target URL. The selected unrestricted run remains the baseline when viewed, and the selected IPv6-only run remains the comparison when viewed. Readiness data includes the source measurement IDs.
+
+History uses the report's `measurement_id` field. It reads the readiness saved at completion and reuses it for both exports. Older reports retain any readiness they stored. If missing, the server can reconstruct it at startup from compatible saved runs available at the original completion time. Missing comparisons appear blank. Invalid UUIDs return HTTP 422, and unknown measurement IDs return HTTP 404.
 
 JSON preserves structured browser and socket evidence. CSV flattens that evidence into columns, repeats available readiness totals alongside resource rows, and can include a totals-only row for a report without resources. Values that begin with common spreadsheet formula prefixes are escaped when exported.
 

@@ -12,7 +12,7 @@ Use it to review a deployment before enabling IPv6, identify third-party depende
 - **Multi-layer dependency graphs** use Chromium initiator evidence and color nodes by DNS capability.
 - **IPv6 readiness metrics** separate DNS capability from demonstrated HTTP(S) retrieval over IPv6.
 - **Failure classification** distinguishes DNS, unavailable IP families, TCP, TLS, HTTP errors, timeouts, browser blocking or cancellation, and unknown causes.
-- **Interactive dashboard and local reports** provide filtering, resource details, JSON and CSV downloads, and saved measurements that can be reopened by API job ID.
+- **Interactive dashboard and local reports** provide filtering, resource details, JSON and CSV downloads, and a searchable Measurement History.
 
 ## Installation
 
@@ -40,6 +40,8 @@ These commands use the virtual environment's interpreter directly. Open the [loc
 3. Run **IPv6-only** for the same URL. The report compares that run with the saved unrestricted baseline. Use **IPv4-only** when you need a separate IPv4 control.
 4. Compare DNS and HTTP readiness. Use the failure breakdown, resource filters, and graph node details to investigate individual results.
 5. Download **JSON** for the full evidence or **CSV** for a resource-oriented export. Keep the report IDs and environment details when comparing runs.
+
+Use **Measurement History** to browse completed runs newest first. Search by website URL or filter by mode, then select **View Measurement**. The historical view shows the original timestamp and saved readiness and exports the same snapshot. It reads reports from the server without running the measurement again.
 
 The collector can also run without the dashboard. It writes a single JSON report and prints its output path. Cross-run readiness pairing is available through the dashboard and API.
 
@@ -175,6 +177,10 @@ The default server exposes [Swagger UI](http://127.0.0.1:8000/docs), [ReDoc](htt
 | `GET /api/measurements/{job_id}/resources/{resource_index}` | Job ID and zero-based resource index | One resource record |
 | `GET /api/measurements/{job_id}/export.json` | Job ID | Full report download |
 | `GET /api/measurements/{job_id}/export.csv` | Job ID | Resource and readiness columns |
+| `GET /api/measurements/history` | None | Completed measurement summaries, newest first |
+| `GET /api/measurements/history/{measurement_id}` | Measurement UUID | Saved report with its historical readiness |
+| `GET /api/measurements/history/{measurement_id}/export.json` | Measurement UUID | Historical JSON snapshot |
+| `GET /api/measurements/history/{measurement_id}/export.csv` | Measurement UUID | Historical CSV snapshot |
 
 ```powershell
 $base = 'http://127.0.0.1:8000'

@@ -38,6 +38,62 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _saved_timestamp(value: object, fallback: str) -> str:
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc).isoformat()
+        except (ValueError, OverflowError):
+            pass
+    return fallback
+
+
+def _measurement_uuid(value: object) -> uuid.UUID | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return uuid.UUID(value)
+    except ValueError:
+        return None
+
+
+def _compatible_report(report: object) -> bool:
+    if not isinstance(report, dict) or not _measurement_uuid(report.get("measurement_id")):
+        return False
+    target = report.get("target_url")
+    resources = report.get("resources")
+    if not isinstance(target, str) or not network_url_key(target) or not isinstance(resources, list):
+        return False
+    for resource in resources:
+        if not isinstance(resource, dict) or not isinstance(resource.get("url"), str):
+            return False
+        for key in ("ip_evidence", "dependency", "failure_classification", "raw_evidence"):
+            if resource.get(key) is not None and not isinstance(resource[key], dict):
+                return False
+        evidence = resource.get("ip_evidence") or {}
+        if any(evidence.get(key) is not None and not isinstance(evidence[key], dict)
+               for key in ("resolved_addresses", "connected_peer", "proxy_origin")):
+            return False
+    for key in ("summary", "navigation", "network_mode", "readiness", "saved_readiness", "dependency_graph"):
+        if report.get(key) is not None and not isinstance(report[key], dict):
+            return False
+    for key in ("readiness", "saved_readiness"):
+        readiness = report.get(key) or {}
+        if readiness.get("total_baseline_resources") is not None and not isinstance(readiness.get("dns_counts"), dict):
+            return False
+    graph = report.get("dependency_graph") or {}
+    for key, required in (("nodes", ("url",)), ("edges", ("parent_url", "child_url"))):
+        entries = graph.get(key, [])
+        if not isinstance(entries, list) or any(
+            not isinstance(entry, dict) or any(not isinstance(entry.get(field), str) for field in required)
+            for entry in entries
+        ):
+            return False
+    return True
+
+
 def load_saved_reports() -> int:
     DATA_DIRECTORY.mkdir(parents=True, exist_ok=True)
     loaded_jobs = {}
@@ -49,31 +105,45 @@ def load_saved_reports() -> int:
             modified_at = datetime.fromtimestamp(
                 report_path.stat().st_mtime, timezone.utc
             ).isoformat()
-        except (OSError, json.JSONDecodeError) as error:
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
             _logger.warning("Could not load saved report %s: %s", report_path, error)
             continue
 
-        if not isinstance(report, dict) or not isinstance(report.get("resources"), list):
+        if not _compatible_report(report):
             continue
 
-        job_id = report.get("dashboard_job_id") or report.get("measurement_id")
-        target_url = report.get("target_url")
-        if not isinstance(job_id, str) or not isinstance(target_url, str):
-            continue
-
-        started_at = report.get("started_at") or modified_at
+        job_id = report.get("dashboard_job_id")
+        if not _measurement_uuid(job_id):
+            job_id = report["measurement_id"]
+        started_at = _saved_timestamp(report.get("started_at"), _saved_timestamp(report.get("completed_at"), modified_at))
+        completed_at = _saved_timestamp(report.get("completed_at"), started_at)
+        report.update(started_at=started_at, completed_at=completed_at)
         report.setdefault("output_file", str(report_path))
         loaded_jobs[job_id] = {
             "id": job_id,
-            "url": target_url,
+            "url": report["target_url"],
             "mode": report.get("measurement_mode", "unrestricted"),
             "status": "completed",
             "created_at": started_at,
             "started_at": started_at,
-            "completed_at": modified_at,
+            "completed_at": completed_at,
             "error": None,
             "report": report,
         }
+
+    # Legacy reports may predate stored readiness. Use only saved evidence available at that time.
+    pairs_by_target: dict[str, list[dict]] = {}
+    for job in sorted(loaded_jobs.values(), key=lambda job: job["completed_at"]):
+        report = job["report"]
+        candidates = pairs_by_target.setdefault(network_url_key(report["target_url"]), [])
+        if "saved_readiness" not in report:
+            report["saved_readiness"] = report.get("readiness")
+            if report["saved_readiness"] is None:
+                try:
+                    report["saved_readiness"] = _paired_readiness(report, candidates)
+                except (KeyError, TypeError, AttributeError, ValueError):
+                    _logger.warning("Could not restore readiness for measurement %s", report["measurement_id"])
+        candidates.append(report)
 
     with _jobs_lock:
         _jobs.update(loaded_jobs)
@@ -107,10 +177,9 @@ def _run_measurement(job_id: str, url: str, mode: str) -> None:
         job["started_at"] = _utc_now()
 
     try:
-        report = _persist_report(
-            job_id,
-            collect_resources(url, measurement_mode=mode),
-        )
+        report = collect_resources(url, measurement_mode=mode)
+        report["saved_readiness"] = _paired_readiness(report)
+        report = _persist_report(job_id, report)
     except Exception as error:
         with _jobs_lock:
             job = _jobs[job_id]
@@ -134,12 +203,13 @@ def _get_job(job_id: str) -> dict:
         return dict(job)
 
 
-def _report_with_readiness(report: dict) -> dict:
-    target = network_url_key(report["target_url"])
+def _paired_readiness(report: dict, matching: list[dict] | None = None) -> dict | None:
     mode = report.get("measurement_mode", "unrestricted")
-    with _jobs_lock:
-        candidates = [job["report"] for job in _jobs.values() if job.get("report")]
-    matching = [candidate for candidate in candidates if target and network_url_key(candidate["target_url"]) == target]
+    if matching is None:
+        target = network_url_key(report["target_url"])
+        with _jobs_lock:
+            candidates = [job["report"] for job in _jobs.values() if job.get("report")]
+        matching = [candidate for candidate in candidates if target and network_url_key(candidate["target_url"]) == target]
 
     def completed_at(candidate: dict) -> str:
         return candidate.get("completed_at") or candidate.get("started_at") or ""
@@ -152,7 +222,13 @@ def _report_with_readiness(report: dict) -> dict:
         (candidate for candidate in matching if is_ipv6_comparison(candidate)),
         key=completed_at, default=None,
     )
-    result = {**report, "readiness": calculate_readiness(baseline, ipv6) if baseline is not None else None}
+    return calculate_readiness(baseline, ipv6) if baseline is not None else None
+
+
+def _report_with_readiness(report: dict, *, historical: bool = False) -> dict:
+    readiness = report.get("saved_readiness") if historical else _paired_readiness(report)
+    result = {**report, "readiness": readiness}
+    result.pop("saved_readiness", None)
     if any("dns_capability" not in resource for resource in report["resources"]):
         result["resources"] = [
             {**resource, "dns_capability": classify_dns_capability(resource)} for resource in report["resources"]
@@ -161,7 +237,7 @@ def _report_with_readiness(report: dict) -> dict:
         if graph := report.get("dependency_graph"):
             result["dependency_graph"] = {
                 **graph,
-                "nodes": [{**node, "dns_capability": capabilities.get(node["url"], "unknown")} for node in graph["nodes"]],
+                "nodes": [{**node, "dns_capability": capabilities.get(node["url"], "unknown")} for node in graph.get("nodes", [])],
             }
     return result
 
@@ -221,6 +297,42 @@ def start_measurement(request: MeasurementRequest) -> dict:
     }
 
 
+@router.get("/measurements/history")
+def list_measurement_history() -> list[dict]:
+    with _jobs_lock:
+        completed = [job for job in _jobs.values() if job["status"] == "completed" and job.get("report")]
+    entries = []
+    for job in sorted(completed, key=lambda job: job["completed_at"], reverse=True):
+        report = job["report"]
+        readiness = report.get("saved_readiness") or {}
+        entries.append({
+            "measurement_id": report["measurement_id"],
+            "target_url": job["url"],
+            "started_at": job["started_at"],
+            "completed_at": job["completed_at"],
+            "measurement_mode": job["mode"],
+            "total_resources": (report.get("summary") or {}).get("total_resources", len(report["resources"])),
+            "dns_ipv6_readiness_percent": readiness.get("dns_ipv6_readiness_percent"),
+            "http_ipv6_readiness_percent": readiness.get("http_ipv6_readiness_percent"),
+            "status": job["status"],
+        })
+    return entries
+
+
+def _saved_report(measurement_id: uuid.UUID) -> dict:
+    with _jobs_lock:
+        for job in _jobs.values():
+            report = job.get("report")
+            if job["status"] == "completed" and report and _measurement_uuid(report["measurement_id"]) == measurement_id:
+                return report
+    raise HTTPException(status_code=404, detail="Saved measurement not found")
+
+
+@router.get("/measurements/history/{measurement_id}")
+def get_historical_measurement(measurement_id: uuid.UUID) -> dict:
+    return _report_with_readiness(_saved_report(measurement_id), historical=True)
+
+
 @router.get("/measurements/{job_id}")
 def get_measurement_status(job_id: str) -> dict:
     job = _get_job(job_id)
@@ -264,12 +376,21 @@ def download_json_report(job_id: str) -> Response:
     report = job.get("report")
     if report is None:
         raise HTTPException(status_code=409, detail="Measurement report is not ready")
-    content = json.dumps(_report_with_readiness(report), indent=2)
+    return _json_export(_report_with_readiness(report), job_id)
+
+
+@router.get("/measurements/history/{measurement_id}/export.json")
+def download_historical_json_report(measurement_id: uuid.UUID) -> Response:
+    return _json_export(get_historical_measurement(measurement_id), str(measurement_id))
+
+
+def _json_export(report: dict, identifier: str) -> Response:
+    content = json.dumps(report, indent=2)
     return Response(
         content=content,
         media_type="application/json",
         headers={
-            "Content-Disposition": f'attachment; filename="measurement-{job_id}.json"'
+            "Content-Disposition": f'attachment; filename="measurement-{identifier}.json"'
         },
     )
 
@@ -280,7 +401,16 @@ def download_csv_report(job_id: str) -> Response:
     if report is None:
         raise HTTPException(status_code=409, detail="Measurement report is not ready")
 
-    readiness = _report_with_readiness(report)["readiness"] or {}
+    return _csv_export(_report_with_readiness(report), job_id)
+
+
+@router.get("/measurements/history/{measurement_id}/export.csv")
+def download_historical_csv_report(measurement_id: uuid.UUID) -> Response:
+    return _csv_export(get_historical_measurement(measurement_id), str(measurement_id))
+
+
+def _csv_export(report: dict, identifier: str) -> Response:
+    readiness = report["readiness"] or {}
     dns_counts = readiness.get("dns_counts") or {}
     http_counts = readiness.get("http_outcome_counts") or {}
     outcomes = readiness.get("http_resource_outcomes") or {}
@@ -395,6 +525,6 @@ def download_csv_report(job_id: str) -> Response:
         content=output.getvalue(),
         media_type="text/csv; charset=utf-8",
         headers={
-            "Content-Disposition": f'attachment; filename="measurement-{job_id}.csv"'
+            "Content-Disposition": f'attachment; filename="measurement-{identifier}.csv"'
         },
     )

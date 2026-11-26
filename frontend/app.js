@@ -4,6 +4,13 @@ const statusBanner = document.querySelector("#measurement-status");
 const statusMessage = document.querySelector("#status-message");
 const statusTime = document.querySelector("#status-time");
 const resultsSection = document.querySelector("#results-section");
+const measurementPanel = document.querySelector("#measurement-panel");
+const historyPanel = document.querySelector("#history-panel");
+const historyButton = document.querySelector("#show-history");
+const historyRows = document.querySelector("#history-rows");
+const historySearch = document.querySelector("#history-search");
+const historyMode = document.querySelector("#history-mode");
+const historyStatus = document.querySelector("#history-status");
 const tableBody = document.querySelector("#resource-table-body");
 const resourceScroll = document.querySelector(".observed-resources-scroll");
 const resourceScrollbar = document.querySelector("#resource-scrollbar");
@@ -15,6 +22,8 @@ const graphSvg = document.querySelector("#dependency-graph");
 
 let activeReport = null;
 let activeJob = null;
+let historyEntries = [];
+let historyRequest = 0;
 
 const modeLabels = { unrestricted: "Unrestricted", ipv4_only: "IPv4-only", ipv6_only: "IPv6-only" };
 const capabilityLabels = { ipv4_only: "IPv4-only", dual_stack: "Dual-stack", ipv6_only: "IPv6-only", unknown: "Unknown" };
@@ -46,14 +55,107 @@ function formatTime(dateString) {
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function setExportLinks(jobId) {
+function setExportLinks(identifier, historical = false) {
+  const path = historical ? "/api/measurements/history" : "/api/measurements";
   for (const [id, format] of [["download-json", "json"], ["download-csv", "csv"]]) {
     const link = document.getElementById(id);
-    link.href = `/api/measurements/${encodeURIComponent(jobId)}/export.${format}`;
+    link.href = `${path}/${encodeURIComponent(identifier)}/export.${format}`;
     link.classList.remove("disabled-link");
     link.removeAttribute("aria-disabled");
-    link.setAttribute("download", `measurement-${jobId}.${format}`);
+    link.setAttribute("download", `measurement-${identifier}.${format}`);
   }
+}
+
+function formatDateTime(value) {
+  const date = new Date(value || "");
+  return Number.isNaN(date.getTime()) ? "Time unavailable" : date.toLocaleString();
+}
+
+function formatPercent(value) {
+  return value == null ? "—" : `${value}%`;
+}
+
+function renderHistory() {
+  const query = historySearch.value.trim().toLowerCase();
+  const mode = historyMode.value;
+  const visible = historyEntries.filter((entry) =>
+    entry.target_url.toLowerCase().includes(query) && (mode === "all" || entry.measurement_mode === mode));
+  historyRows.replaceChildren();
+  historyStatus.textContent = visible.length
+    ? `${visible.length} of ${historyEntries.length} saved measurements`
+    : historyEntries.length ? "No saved measurements match these filters." : "No saved measurements yet.";
+  for (const entry of visible) {
+    const row = historyRows.insertRow();
+    const url = row.insertCell();
+    url.className = "history-url";
+    const label = document.createElement("span");
+    label.className = "url-main";
+    label.textContent = label.title = entry.target_url;
+    url.append(label);
+    for (const value of [formatDateTime(entry.started_at || entry.completed_at), modeLabels[entry.measurement_mode] || entry.measurement_mode,
+      entry.total_resources ?? "—", formatPercent(entry.dns_ipv6_readiness_percent), formatPercent(entry.http_ipv6_readiness_percent), "Completed"]) {
+      row.insertCell().textContent = value;
+    }
+    const button = document.createElement("button");
+    button.className = "secondary-button";
+    button.type = "button";
+    button.textContent = "View Measurement";
+    button.addEventListener("click", () => openHistoricalMeasurement(entry.measurement_id, button));
+    row.insertCell().append(button);
+  }
+}
+
+async function showHistory() {
+  const request = ++historyRequest;
+  measurementPanel.hidden = true;
+  historyPanel.hidden = false;
+  resultsSection.classList.add("hidden");
+  document.querySelector("#history-heading").focus();
+  historyEntries = [];
+  historyRows.replaceChildren();
+  historyStatus.textContent = "Loading saved measurements…";
+  try {
+    const response = await fetch("/api/measurements/history");
+    if (!response.ok) throw new Error("Could not load measurement history.");
+    const entries = await response.json();
+    if (request !== historyRequest) return;
+    historyEntries = entries;
+    renderHistory();
+  } catch (error) {
+    if (request === historyRequest) historyStatus.textContent = error.message || "Could not load measurement history.";
+  }
+}
+
+async function openHistoricalMeasurement(id, button) {
+  const request = ++historyRequest;
+  button.disabled = true;
+  historyStatus.textContent = "Opening saved measurement…";
+  try {
+    const response = await fetch(`/api/measurements/history/${encodeURIComponent(id)}`);
+    if (!response.ok) throw new Error("Could not open this saved measurement.");
+    const report = await response.json();
+    if (request !== historyRequest) return;
+    searchInput.value = "";
+    resultFilter.value = typeFilter.value = "all";
+    activeReport = report;
+    renderReport(report, { historical: true });
+    setExportLinks(id, true);
+    historyPanel.hidden = true;
+    document.querySelector("#result-title").focus();
+  } catch (error) {
+    if (request === historyRequest) historyStatus.textContent = error.message || "Could not open this saved measurement.";
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function showNewMeasurement() {
+  historyRequest++;
+  historyPanel.hidden = true;
+  resultsSection.classList.add("hidden");
+  measurementPanel.hidden = false;
+  setStatus("idle", "Enter a public website to begin.");
+  document.querySelector("#url-input").focus();
 }
 
 async function pollJob(jobId) {
@@ -83,7 +185,7 @@ form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const url = document.querySelector("#url-input").value.trim();
   const mode = document.querySelector("#mode-select").value;
-  runButton.disabled = true;
+  runButton.disabled = historyButton.disabled = true;
   resultsSection.classList.add("hidden");
   setStatus("running", "Starting browser measurement…", "In progress");
 
@@ -106,12 +208,14 @@ form.addEventListener("submit", async (event) => {
       setStatus("failed", error.message || "Measurement could not be completed.");
     }
   } finally {
-    runButton.disabled = false;
+    runButton.disabled = historyButton.disabled = false;
   }
 });
 
-function renderReport(report) {
+function renderReport(report, { historical = false } = {}) {
   resultsSection.classList.remove("hidden");
+  document.querySelector("#report-view-label").textContent = historical ? "HISTORICAL MEASUREMENT" : "LATEST MEASUREMENT";
+  document.querySelector("#historical-actions").hidden = !historical;
   const summary = report.summary || {};
   const resources = report.resources || [];
   const classified = summary.failure_categories || {};
@@ -125,7 +229,7 @@ function renderReport(report) {
   }
 
   document.querySelector("#result-title").textContent = report.target_url || "Measurement results";
-  document.querySelector("#result-subtitle").textContent = `${modeLabels[report.measurement_mode] || modeLabels.unrestricted} · ${new Date(report.started_at).toLocaleString()}`;
+  document.querySelector("#result-subtitle").textContent = `${modeLabels[report.measurement_mode] || modeLabels.unrestricted} · ${formatDateTime(report.started_at || report.completed_at)}`;
   document.querySelector("#metric-total").textContent = summary.total_resources ?? resources.length;
   document.querySelector("#metric-success").textContent = summary.successful_or_http_success ?? resources.filter((resource) => resource.success === true).length;
   document.querySelector("#metric-failed").textContent = summary.failed ?? resources.filter((resource) => resource.success === false).length;
@@ -135,7 +239,7 @@ function renderReport(report) {
   }
 
   populateTypeFilter(resources);
-  renderReadiness(report.readiness);
+  renderReadiness(report.readiness, historical);
   renderResourceTable();
   renderDependencyGraph(report.dependency_graph || {}, resources);
   renderNetworkEvidence(report.network_mode);
@@ -151,16 +255,16 @@ function renderCapabilityLegend(list, counts = null) {
   }));
 }
 
-function renderReadiness(readiness) {
+function renderReadiness(readiness, historical) {
   const distribution = document.querySelector("#readiness-distribution");
   const legend = document.querySelector("#readiness-counts");
   const total = readiness?.total_baseline_resources;
-  const score = (value) => value == null ? "—" : `${value}%`;
-  document.querySelector("#dns-readiness").textContent = score(readiness?.dns_ipv6_readiness_percent);
-  document.querySelector("#http-readiness").textContent = score(readiness?.http_ipv6_readiness_percent);
+  document.querySelector("#dns-readiness").textContent = formatPercent(readiness?.dns_ipv6_readiness_percent);
+  document.querySelector("#http-readiness").textContent = formatPercent(readiness?.http_ipv6_readiness_percent);
   document.querySelector("#baseline-total").textContent = total ?? "—";
   const outcomes = readiness?.http_outcome_counts;
-  let status = "Run an unrestricted measurement for this URL to establish the baseline.";
+  let status = historical ? "No unrestricted baseline was available for this saved measurement."
+    : "Run an unrestricted measurement for this URL to establish the baseline.";
   if (total === 0) {
     status = "The unrestricted run captured no HTTP(S) resources.";
   } else if (total && outcomes) {
@@ -168,7 +272,8 @@ function renderReadiness(readiness) {
     const dependent = Object.keys(readiness.http_undiscovered_with_failed_dependency || {}).length;
     if (dependent) status += ` · ${dependent} undiscovered with a failed baseline dependency`;
   } else if (total) {
-    status = "Run IPv6-only for this URL to measure HTTP IPv6 readiness.";
+    status = historical ? "No IPv6-only comparison was available for this saved measurement."
+      : "Run IPv6-only for this URL to measure HTTP IPv6 readiness.";
   }
   document.querySelector("#readiness-status").textContent = status;
 
@@ -504,6 +609,12 @@ function renderLimitations(report) {
 searchInput.addEventListener("input", renderResourceTable);
 resultFilter.addEventListener("change", renderResourceTable);
 typeFilter.addEventListener("change", renderResourceTable);
+historyButton.addEventListener("click", showHistory);
+document.querySelector("#back-to-history").addEventListener("click", showHistory);
+document.querySelector("#history-new-measurement").addEventListener("click", showNewMeasurement);
+document.querySelector("#report-new-measurement").addEventListener("click", showNewMeasurement);
+historySearch.addEventListener("input", renderHistory);
+historyMode.addEventListener("change", renderHistory);
 
 const resourceResizeObserver = new ResizeObserver(() => {
   const horizontalScrollbar = resourceScroll.offsetHeight - resourceScroll.clientHeight;

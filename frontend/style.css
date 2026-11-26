@@ -156,6 +156,14 @@ h2 { margin: 0; color: #193550; font-size: 17px; letter-spacing: -0.02em; }
 .filter-control { min-width: 145px; }
 .filter-control select { height: 36px; padding: 0 28px 0 10px; font-size: 11px; }
 .table-scroll { overflow-x: auto; }
+.history-toolbar { margin-top: 16px; }
+.history-scroll { max-height: 35rem; overflow: auto; }
+.history-scroll table { border-collapse: separate; border-spacing: 0; }
+.history-scroll th { position: sticky; top: 0; z-index: 1; background: #f8fafb; white-space: nowrap; }
+.history-scroll tbody tr { height: 3.25rem; }
+.history-scroll td { white-space: nowrap; }
+.history-scroll .history-url { min-width: 9rem; max-width: 18rem; }
+#historical-actions:not([hidden]) { display: flex; flex-wrap: wrap; gap: 9px; margin-bottom: 14px; }
 .observed-resources-list { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
 #resource-scrollbar {
   position: relative;
