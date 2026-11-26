@@ -130,10 +130,6 @@ The auditor uses the HTTP status, Playwright error, matching CDP failure metadat
 
 The dashboard shows readiness percentages and a color-coded resource distribution, measurement totals, observed connection evidence, and a failure breakdown. **Observed Resources** supports URL and hostname search, result and type filters, and expandable failure and IP details. When more than 10 rows match, the list has an independent scrollbar and sticky header. All matching rows remain accessible. Select verified graph nodes for resource details.
 
-![Dashboard showing DNS and HTTP IPv6 readiness for a completed measurement](docs/images/dashboard.png)
-
-The screenshot shows an example measurement of `example.com` captured from the running dashboard. Results vary by run and network.
-
 ## Project structure
 
 ```text
