@@ -21,7 +21,7 @@ The documented environment is **Windows with PowerShell and Python 3.12**. Proje
 Clone using the Git URL from the repository's **Code** menu or your fork. Run the remaining commands from the checkout root.
 
 ```powershell
-$repositoryUrl = Read-Host "Paste the repository's Git clone URL"
+$repositoryUrl = https://github.com/PrabalSingh298/IPv6-Readiness-Auditor.git
 git clone $repositoryUrl IPv6-Readiness-Auditor
 Set-Location IPv6-Readiness-Auditor
 python --version
@@ -241,3 +241,4 @@ For bugs, include reproduction steps, the measurement mode, and a redacted repor
 - [FastAPI and its interactive API documentation](https://fastapi.tiangolo.com/tutorial/first-steps/)
 - [RFC 1928 SOCKS5](https://www.rfc-editor.org/info/rfc1928/)
 - [RFC 8200 IPv6 specification](https://www.rfc-editor.org/info/rfc8200/)
+
